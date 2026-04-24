@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="utf-8" />
+<meta name="generator" content="pandoc" />
+<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+
+
+<title>Compilation and Call Overhead</title>
+
+<script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
+// be compatible with the behavior of Pandoc < 2.8).
+document.addEventListener('DOMContentLoaded', function(e) {
+  var hs = document.querySelectorAll("div.section[class*='level'] > :first-child");
+  var i, h, a;
+  for (i = 0; i < hs.length; i++) {
+    h = hs[i];
+    if (!/^h[1-6]$/i.test(h.tagName)) continue;  // it should be a header h1-h6
+    a = h.attributes;
+    while (a.length > 0) h.removeAttribute(a[0].name);
+  }
+});
+</script>
+
+<style type="text/css">
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+span.underline{text-decoration: underline;}
+div.column{display: inline-block; vertical-align: top; width: 50%;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+</style>
+
+
+
+<style type="text/css">
+code {
+white-space: pre;
+}
+.sourceCode {
+overflow: visible;
+}
+</style>
+<style type="text/css" data-origin="pandoc">
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
+<script>
+// apply pandoc div.sourceCode style to pre.sourceCode instead
+(function() {
+  var sheets = document.styleSheets;
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].ownerNode.dataset["origin"] !== "pandoc") continue;
+    try { var rules = sheets[i].cssRules; } catch (e) { continue; }
+    var j = 0;
+    while (j < rules.length) {
+      var rule = rules[j];
+      // check if there is a div.sourceCode rule
+      if (rule.type !== rule.STYLE_RULE || rule.selectorText !== "div.sourceCode") {
+        j++;
+        continue;
+      }
+      var style = rule.style.cssText;
+      // check if color or background-color is set
+      if (rule.style.color === '' && rule.style.backgroundColor === '') {
+        j++;
+        continue;
+      }
+      // replace div.sourceCode by a pre.sourceCode rule
+      sheets[i].deleteRule(j);
+      sheets[i].insertRule('pre.sourceCode{' + style + '}', j);
+    }
+  }
+})();
+</script>
+
+
+
+
+<style type="text/css">body {
+background-color: #fff;
+margin: 1em auto;
+max-width: 700px;
+overflow: visible;
+padding-left: 2em;
+padding-right: 2em;
+font-family: "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+font-size: 14px;
+line-height: 1.35;
+}
+#TOC {
+clear: both;
+margin: 0 0 10px 10px;
+padding: 4px;
+width: 400px;
+border: 1px solid #CCCCCC;
+border-radius: 5px;
+background-color: #f6f6f6;
+font-size: 13px;
+line-height: 1.3;
+}
+#TOC .toctitle {
+font-weight: bold;
+font-size: 15px;
+margin-left: 5px;
+}
+#TOC ul {
+padding-left: 40px;
+margin-left: -1.5em;
+margin-top: 5px;
+margin-bottom: 5px;
+}
+#TOC ul ul {
+margin-left: -2em;
+}
+#TOC li {
+line-height: 16px;
+}
+table {
+margin: 1em auto;
+border-width: 1px;
+border-color: #DDDDDD;
+border-style: outset;
+border-collapse: collapse;
+}
+table th {
+border-width: 2px;
+padding: 5px;
+border-style: inset;
+}
+table td {
+border-width: 1px;
+border-style: inset;
+line-height: 18px;
+padding: 5px 5px;
+}
+table, table th, table td {
+border-left-style: none;
+border-right-style: none;
+}
+table thead, table tr.even {
+background-color: #f7f7f7;
+}
+p {
+margin: 0.5em 0;
+}
+blockquote {
+background-color: #f6f6f6;
+padding: 0.25em 0.75em;
+}
+hr {
+border-style: solid;
+border: none;
+border-top: 1px solid #777;
+margin: 28px 0;
+}
+dl {
+margin-left: 0;
+}
+dl dd {
+margin-bottom: 13px;
+margin-left: 13px;
+}
+dl dt {
+font-weight: bold;
+}
+ul {
+margin-top: 0;
+}
+ul li {
+list-style: circle outside;
+}
+ul ul {
+margin-bottom: 0;
+}
+pre, code {
+background-color: #f7f7f7;
+border-radius: 3px;
+color: #333;
+white-space: pre-wrap; 
+}
+pre {
+border-radius: 3px;
+margin: 5px 0px 10px 0px;
+padding: 10px;
+}
+pre:not([class]) {
+background-color: #f7f7f7;
+}
+code {
+font-family: Consolas, Monaco, 'Courier New', monospace;
+font-size: 85%;
+}
+p > code, li > code {
+padding: 2px 0px;
+}
+div.figure {
+text-align: center;
+}
+img {
+background-color: #FFFFFF;
+padding: 2px;
+border: 1px solid #DDDDDD;
+border-radius: 3px;
+border: 1px solid #CCCCCC;
+margin: 0 5px;
+}
+h1 {
+margin-top: 0;
+font-size: 35px;
+line-height: 40px;
+}
+h2 {
+border-bottom: 4px solid #f7f7f7;
+padding-top: 10px;
+padding-bottom: 2px;
+font-size: 145%;
+}
+h3 {
+border-bottom: 2px solid #f7f7f7;
+padding-top: 10px;
+font-size: 120%;
+}
+h4 {
+border-bottom: 1px solid #f7f7f7;
+margin-left: 8px;
+font-size: 105%;
+}
+h5, h6 {
+border-bottom: 1px solid #ccc;
+font-size: 105%;
+}
+a {
+color: #0033dd;
+text-decoration: none;
+}
+a:hover {
+color: #6666ff; }
+a:visited {
+color: #800080; }
+a:visited:hover {
+color: #BB00BB; }
+a[href^="http:"] {
+text-decoration: underline; }
+a[href^="https:"] {
+text-decoration: underline; }
+
+code > span.kw { color: #555; font-weight: bold; } 
+code > span.dt { color: #902000; } 
+code > span.dv { color: #40a070; } 
+code > span.bn { color: #d14; } 
+code > span.fl { color: #d14; } 
+code > span.ch { color: #d14; } 
+code > span.st { color: #d14; } 
+code > span.co { color: #888888; font-style: italic; } 
+code > span.ot { color: #007020; } 
+code > span.al { color: #ff0000; font-weight: bold; } 
+code > span.fu { color: #900; font-weight: bold; } 
+code > span.er { color: #a61717; background-color: #e3d2d2; } 
+</style>
+
+
+
+
+</head>
+
+<body>
+
+
+
+
+<h1 class="title toc-ignore">Compilation and Call Overhead</h1>
+
+
+
+<style type="text/css">
+.rtinycc { background-color: #E3F2FD; }
+pre.rtinycc span { background-color: #E3F2FD; }
+</style>
+<p>This article measures two different costs:</p>
+<ul>
+<li>compilation latency for a tiny module</li>
+<li>call overhead once the code is already compiled</li>
+</ul>
+<p>The comparison target is the <a href="https://cran.r-project.org/package=callme"><code>callme</code></a>
+package, which builds ordinary <code>.Call()</code> entry points with
+<code>R CMD SHLIB</code>. That means it goes through the platform
+compiler toolchain (<code>gcc</code>/<code>clang</code> on the usual
+Unix-like targets), so we should expect stronger optimization than
+TinyCC for steady-state machine code. That does not make the comparison
+useless, but it does mean the runtime results combine two effects:</p>
+<ul>
+<li>direct <code>.Call()</code> entry points and direct R C API
+allocation in <code>callme</code></li>
+<li>better backend optimization from the system compiler</li>
+</ul>
+<p>The point is not that the two packages expose identical APIs. They do
+not. Instead, the comparison asks a narrower question:</p>
+<ul>
+<li>how much compile-time latency does in-memory TinyCC avoid?</li>
+<li>what is the extra runtime cost of Rtinycc’s generated wrapper
+layer?</li>
+<li>how much does an extra copy matter when Rtinycc has to convert a
+returned C buffer into an R vector?</li>
+</ul>
+<div id="three-minimal-cases" class="section level2">
+<h2>Three Minimal Cases</h2>
+<p>We use three small workloads:</p>
+<ul>
+<li><code>noop()</code>: takes nothing, returns nothing</li>
+<li><code>fill_rand(out, n)</code>: fills a caller-provided numeric
+buffer in place</li>
+<li><code>rand_unif(n)</code>: generates <code>n</code> random
+doubles</li>
+</ul>
+<p>The <code>fill_rand()</code> case is the fairer array-oriented
+comparison:</p>
+<ul>
+<li><code>Rtinycc</code> receives a <code>numeric_array</code>, so the
+wrapper borrows the backing <code>REAL()</code> storage of the R vector
+directly</li>
+<li><code>callme</code> takes an R numeric vector and writes into
+<code>REAL(vec)</code> directly</li>
+</ul>
+<p>The <code>rand_unif()</code> case intentionally stresses the extra
+copy path:</p>
+<ul>
+<li><code>callme</code> allocates the final R vector directly with the R
+C API</li>
+<li><code>Rtinycc</code> returns a heap-allocated <code>double*</code>,
+and the generated wrapper copies that buffer into a fresh R numeric
+vector before freeing the original C allocation</li>
+</ul>
+<pre class="rtinycc"><code>#include &lt;R.h&gt;
+#include &lt;Rinternals.h&gt;
+#include &lt;Rmath.h&gt;
+#include &lt;stdlib.h&gt;
+
+void noop(void) {}
+
+void fill_rand(double* out, int n) {
+  if (n &lt; 0) {
+    Rf_error(&quot;n must be non-negative&quot;);
+  }
+
+  GetRNGstate();
+  for (int i = 0; i &lt; n; ++i) {
+    out[i] = unif_rand();
+  }
+  PutRNGstate();
+}
+
+double* rand_unif(int n) {
+  if (n &lt; 0) {
+    Rf_error(&quot;n must be non-negative&quot;);
+  }
+  if (n == 0) {
+    return (double*) malloc(sizeof(double));
+  }
+
+  double *out = (double*) malloc(sizeof(double) * (size_t) n);
+  if (!out) {
+    Rf_error(&quot;malloc failed&quot;);
+  }
+
+  GetRNGstate();
+  for (int i = 0; i &lt; n; ++i) {
+    out[i] = unif_rand();
+  }
+  PutRNGstate();
+  return out;
+}</code></pre>
+<details>
+<summary>
+Click to show R code
+</summary>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a>rtinycc_code <span class="ot">&lt;-</span> <span class="st">&quot;#include &lt;R.h&gt;</span><span class="sc">\n</span><span class="st">#include &lt;Rinternals.h&gt;</span><span class="sc">\n</span><span class="st">#include &lt;Rmath.h&gt;</span><span class="sc">\n</span><span class="st">#include &lt;stdlib.h&gt;</span><span class="sc">\n\n</span><span class="st">void noop(void) {}</span><span class="sc">\n\n</span><span class="st">void fill_rand(double* out, int n) {</span><span class="sc">\n</span><span class="st">  if (n &lt; 0) {</span><span class="sc">\n</span><span class="st">    Rf_error(</span><span class="sc">\&quot;</span><span class="st">n must be non-negative</span><span class="sc">\&quot;</span><span class="st">);</span><span class="sc">\n</span><span class="st">  }</span><span class="sc">\n\n</span><span class="st">  GetRNGstate();</span><span class="sc">\n</span><span class="st">  for (int i = 0; i &lt; n; ++i) {</span><span class="sc">\n</span><span class="st">    out[i] = unif_rand();</span><span class="sc">\n</span><span class="st">  }</span><span class="sc">\n</span><span class="st">  PutRNGstate();</span><span class="sc">\n</span><span class="st">}</span><span class="sc">\n\n</span><span class="st">double* rand_unif(int n) {</span><span class="sc">\n</span><span class="st">  if (n &lt; 0) {</span><span class="sc">\n</span><span class="st">    Rf_error(</span><span class="sc">\&quot;</span><span class="st">n must be non-negative</span><span class="sc">\&quot;</span><span class="st">);</span><span class="sc">\n</span><span class="st">  }</span><span class="sc">\n</span><span class="st">  if (n == 0) {</span><span class="sc">\n</span><span class="st">    return (double*) malloc(sizeof(double));</span><span class="sc">\n</span><span class="st">  }</span><span class="sc">\n\n</span><span class="st">  double *out = (double*) malloc(sizeof(double) * (size_t) n);</span><span class="sc">\n</span><span class="st">  if (!out) {</span><span class="sc">\n</span><span class="st">    Rf_error(</span><span class="sc">\&quot;</span><span class="st">malloc failed</span><span class="sc">\&quot;</span><span class="st">);</span><span class="sc">\n</span><span class="st">  }</span><span class="sc">\n\n</span><span class="st">  GetRNGstate();</span><span class="sc">\n</span><span class="st">  for (int i = 0; i &lt; n; ++i) {</span><span class="sc">\n</span><span class="st">    out[i] = unif_rand();</span><span class="sc">\n</span><span class="st">  }</span><span class="sc">\n</span><span class="st">  PutRNGstate();</span><span class="sc">\n</span><span class="st">  return out;</span><span class="sc">\n</span><span class="st">}&quot;</span></span></code></pre></div>
+</details>
+<pre class="rtinycc"><code>#include &lt;R.h&gt;
+#include &lt;Rinternals.h&gt;
+#include &lt;Rmath.h&gt;
+
+SEXP noop(void) {
+  return R_NilValue;
+}
+
+SEXP fill_rand(SEXP out_, SEXP n_) {
+  int n = asInteger(n_);
+  if (n &lt; 0) {
+    Rf_error(&quot;n must be non-negative&quot;);
+  }
+
+  if (TYPEOF(out_) != REALSXP) {
+    Rf_error(&quot;out must be a numeric vector&quot;);
+  }
+
+  if (XLENGTH(out_) &lt; n) {
+    Rf_error(&quot;out is shorter than n&quot;);
+  }
+
+  double *out = REAL(out_);
+  GetRNGstate();
+  for (int i = 0; i &lt; n; ++i) {
+    out[i] = unif_rand();
+  }
+  PutRNGstate();
+
+  return out_;
+}
+
+SEXP rand_unif(SEXP n_) {
+  int n = asInteger(n_);
+  if (n &lt; 0) {
+    Rf_error(&quot;n must be non-negative&quot;);
+  }
+
+  SEXP out = PROTECT(allocVector(REALSXP, n));
+  double *ptr = REAL(out);
+
+  GetRNGstate();
+  for (int i = 0; i &lt; n; ++i) {
+    ptr[i] = unif_rand();
+  }
+  PutRNGstate();
+
+  UNPROTECT(1);
+  return out;
+}</code></pre>
+<details>
+<summary>
+Click to show R code
+</summary>
+<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a>callme_code <span class="ot">&lt;-</span> <span class="st">&quot;#include &lt;R.h&gt;</span><span class="sc">\n</span><span class="st">#include &lt;Rinternals.h&gt;</span><span class="sc">\n</span><span class="st">#include &lt;Rmath.h&gt;</span><span class="sc">\n\n</span><span class="st">SEXP noop(void) {</span><span class="sc">\n</span><span class="st">  return R_NilValue;</span><span class="sc">\n</span><span class="st">}</span><span class="sc">\n\n</span><span class="st">SEXP fill_rand(SEXP out_, SEXP n_) {</span><span class="sc">\n</span><span class="st">  int n = asInteger(n_);</span><span class="sc">\n</span><span class="st">  if (n &lt; 0) {</span><span class="sc">\n</span><span class="st">    Rf_error(</span><span class="sc">\&quot;</span><span class="st">n must be non-negative</span><span class="sc">\&quot;</span><span class="st">);</span><span class="sc">\n</span><span class="st">  }</span><span class="sc">\n\n</span><span class="st">  if (TYPEOF(out_) != REALSXP) {</span><span class="sc">\n</span><span class="st">    Rf_error(</span><span class="sc">\&quot;</span><span class="st">out must be a numeric vector</span><span class="sc">\&quot;</span><span class="st">);</span><span class="sc">\n</span><span class="st">  }</span><span class="sc">\n\n</span><span class="st">  if (XLENGTH(out_) &lt; n) {</span><span class="sc">\n</span><span class="st">    Rf_error(</span><span class="sc">\&quot;</span><span class="st">out is shorter than n</span><span class="sc">\&quot;</span><span class="st">);</span><span class="sc">\n</span><span class="st">  }</span><span class="sc">\n\n</span><span class="st">  double *out = REAL(out_);</span><span class="sc">\n</span><span class="st">  GetRNGstate();</span><span class="sc">\n</span><span class="st">  for (int i = 0; i &lt; n; ++i) {</span><span class="sc">\n</span><span class="st">    out[i] = unif_rand();</span><span class="sc">\n</span><span class="st">  }</span><span class="sc">\n</span><span class="st">  PutRNGstate();</span><span class="sc">\n\n</span><span class="st">  return out_;</span><span class="sc">\n</span><span class="st">}</span><span class="sc">\n\n</span><span class="st">SEXP rand_unif(SEXP n_) {</span><span class="sc">\n</span><span class="st">  int n = asInteger(n_);</span><span class="sc">\n</span><span class="st">  if (n &lt; 0) {</span><span class="sc">\n</span><span class="st">    Rf_error(</span><span class="sc">\&quot;</span><span class="st">n must be non-negative</span><span class="sc">\&quot;</span><span class="st">);</span><span class="sc">\n</span><span class="st">  }</span><span class="sc">\n\n</span><span class="st">  SEXP out = PROTECT(allocVector(REALSXP, n));</span><span class="sc">\n</span><span class="st">  double *ptr = REAL(out);</span><span class="sc">\n\n</span><span class="st">  GetRNGstate();</span><span class="sc">\n</span><span class="st">  for (int i = 0; i &lt; n; ++i) {</span><span class="sc">\n</span><span class="st">    ptr[i] = unif_rand();</span><span class="sc">\n</span><span class="st">  }</span><span class="sc">\n</span><span class="st">  PutRNGstate();</span><span class="sc">\n\n</span><span class="st">  UNPROTECT(1);</span><span class="sc">\n</span><span class="st">  return out;</span><span class="sc">\n</span><span class="st">}&quot;</span></span></code></pre></div>
+</details>
+<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a>build_rtinycc_module <span class="ot">&lt;-</span> <span class="cf">function</span>() {</span>
+<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a>  <span class="fu">tcc_ffi</span>() <span class="sc">|&gt;</span></span>
+<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a>    <span class="fu">tcc_source</span>(rtinycc_code) <span class="sc">|&gt;</span></span>
+<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a>    <span class="fu">tcc_bind</span>(</span>
+<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a>      <span class="at">noop =</span> <span class="fu">list</span>(<span class="at">args =</span> <span class="fu">list</span>(), <span class="at">returns =</span> <span class="st">&quot;void&quot;</span>),</span>
+<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a>      <span class="at">fill_rand =</span> <span class="fu">list</span>(<span class="at">args =</span> <span class="fu">list</span>(<span class="st">&quot;numeric_array&quot;</span>, <span class="st">&quot;i32&quot;</span>), <span class="at">returns =</span> <span class="st">&quot;void&quot;</span>),</span>
+<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a>      <span class="at">rand_unif =</span> <span class="fu">list</span>(</span>
+<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a>        <span class="at">args =</span> <span class="fu">list</span>(<span class="st">&quot;i32&quot;</span>),</span>
+<span id="cb5-9"><a href="#cb5-9" tabindex="-1"></a>        <span class="at">returns =</span> <span class="fu">list</span>(<span class="at">type =</span> <span class="st">&quot;numeric_array&quot;</span>, <span class="at">length_arg =</span> <span class="dv">1</span>, <span class="at">free =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a>      )</span>
+<span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a>    ) <span class="sc">|&gt;</span></span>
+<span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a>    <span class="fu">tcc_compile</span>()</span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a>}</span>
+<span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a></span>
+<span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a>build_callme_module <span class="ot">&lt;-</span> <span class="cf">function</span>() {</span>
+<span id="cb5-16"><a href="#cb5-16" tabindex="-1"></a>  before <span class="ot">&lt;-</span> <span class="fu">names</span>(<span class="fu">getLoadedDLLs</span>())</span>
+<span id="cb5-17"><a href="#cb5-17" tabindex="-1"></a>  mod <span class="ot">&lt;-</span> callme<span class="sc">::</span><span class="fu">compile</span>(callme_code, <span class="at">env =</span> <span class="cn">NULL</span>, <span class="at">verbosity =</span> <span class="dv">0</span>)</span>
+<span id="cb5-18"><a href="#cb5-18" tabindex="-1"></a>  dlls <span class="ot">&lt;-</span> <span class="fu">getLoadedDLLs</span>()</span>
+<span id="cb5-19"><a href="#cb5-19" tabindex="-1"></a>  new_names <span class="ot">&lt;-</span> <span class="fu">setdiff</span>(<span class="fu">names</span>(dlls), before)</span>
+<span id="cb5-20"><a href="#cb5-20" tabindex="-1"></a>  new_names <span class="ot">&lt;-</span> new_names[<span class="fu">startsWith</span>(new_names, <span class="st">&quot;callme_&quot;</span>)]</span>
+<span id="cb5-21"><a href="#cb5-21" tabindex="-1"></a>  <span class="fu">attr</span>(mod, <span class="st">&quot;dll_paths&quot;</span>) <span class="ot">&lt;-</span> <span class="fu">unname</span>(<span class="fu">vapply</span>(</span>
+<span id="cb5-22"><a href="#cb5-22" tabindex="-1"></a>    dlls[new_names],</span>
+<span id="cb5-23"><a href="#cb5-23" tabindex="-1"></a>    <span class="cf">function</span>(x) x[[<span class="st">&quot;path&quot;</span>]],</span>
+<span id="cb5-24"><a href="#cb5-24" tabindex="-1"></a>    <span class="fu">character</span>(<span class="dv">1</span>)</span>
+<span id="cb5-25"><a href="#cb5-25" tabindex="-1"></a>  ))</span>
+<span id="cb5-26"><a href="#cb5-26" tabindex="-1"></a>  mod</span>
+<span id="cb5-27"><a href="#cb5-27" tabindex="-1"></a>}</span>
+<span id="cb5-28"><a href="#cb5-28" tabindex="-1"></a></span>
+<span id="cb5-29"><a href="#cb5-29" tabindex="-1"></a>unload_callme_dlls <span class="ot">&lt;-</span> <span class="cf">function</span>(dll_paths) {</span>
+<span id="cb5-30"><a href="#cb5-30" tabindex="-1"></a>  dll_paths <span class="ot">&lt;-</span> <span class="fu">rev</span>(<span class="fu">unique</span>(dll_paths))</span>
+<span id="cb5-31"><a href="#cb5-31" tabindex="-1"></a>  <span class="cf">if</span> (<span class="fu">is.null</span>(dll_paths) <span class="sc">||</span> <span class="sc">!</span><span class="fu">length</span>(dll_paths)) {</span>
+<span id="cb5-32"><a href="#cb5-32" tabindex="-1"></a>    <span class="fu">return</span>(<span class="fu">invisible</span>(<span class="cn">NULL</span>))</span>
+<span id="cb5-33"><a href="#cb5-33" tabindex="-1"></a>  }</span>
+<span id="cb5-34"><a href="#cb5-34" tabindex="-1"></a>  <span class="cf">for</span> (dll_path <span class="cf">in</span> dll_paths) {</span>
+<span id="cb5-35"><a href="#cb5-35" tabindex="-1"></a>    <span class="cf">if</span> (<span class="fu">is.character</span>(dll_path) <span class="sc">&amp;&amp;</span> <span class="fu">nzchar</span>(dll_path) <span class="sc">&amp;&amp;</span> <span class="fu">file.exists</span>(dll_path)) {</span>
+<span id="cb5-36"><a href="#cb5-36" tabindex="-1"></a>      <span class="fu">try</span>(<span class="fu">dyn.unload</span>(dll_path), <span class="at">silent =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb5-37"><a href="#cb5-37" tabindex="-1"></a>    }</span>
+<span id="cb5-38"><a href="#cb5-38" tabindex="-1"></a>  }</span>
+<span id="cb5-39"><a href="#cb5-39" tabindex="-1"></a>  <span class="fu">invisible</span>(<span class="cn">NULL</span>)</span>
+<span id="cb5-40"><a href="#cb5-40" tabindex="-1"></a>}</span>
+<span id="cb5-41"><a href="#cb5-41" tabindex="-1"></a></span>
+<span id="cb5-42"><a href="#cb5-42" tabindex="-1"></a>build_and_dispose_callme_module <span class="ot">&lt;-</span> <span class="cf">function</span>() {</span>
+<span id="cb5-43"><a href="#cb5-43" tabindex="-1"></a>  mod <span class="ot">&lt;-</span> <span class="fu">build_callme_module</span>()</span>
+<span id="cb5-44"><a href="#cb5-44" tabindex="-1"></a>  dll_paths <span class="ot">&lt;-</span> <span class="fu">attr</span>(mod, <span class="st">&quot;dll_paths&quot;</span>, <span class="at">exact =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb5-45"><a href="#cb5-45" tabindex="-1"></a>  <span class="fu">rm</span>(mod)</span>
+<span id="cb5-46"><a href="#cb5-46" tabindex="-1"></a>  <span class="fu">gc</span>()</span>
+<span id="cb5-47"><a href="#cb5-47" tabindex="-1"></a>  <span class="fu">unload_callme_dlls</span>(dll_paths)</span>
+<span id="cb5-48"><a href="#cb5-48" tabindex="-1"></a>  <span class="fu">invisible</span>(<span class="cn">NULL</span>)</span>
+<span id="cb5-49"><a href="#cb5-49" tabindex="-1"></a>}</span>
+<span id="cb5-50"><a href="#cb5-50" tabindex="-1"></a></span>
+<span id="cb5-51"><a href="#cb5-51" tabindex="-1"></a>callme_runtime_reason <span class="ot">&lt;-</span> <span class="cn">NULL</span></span>
+<span id="cb5-52"><a href="#cb5-52" tabindex="-1"></a>can_run_callme <span class="ot">&lt;-</span> <span class="cn">FALSE</span></span>
+<span id="cb5-53"><a href="#cb5-53" tabindex="-1"></a></span>
+<span id="cb5-54"><a href="#cb5-54" tabindex="-1"></a><span class="cf">if</span> (<span class="sc">!</span>has_callme) {</span>
+<span id="cb5-55"><a href="#cb5-55" tabindex="-1"></a>  callme_runtime_reason <span class="ot">&lt;-</span> <span class="st">&quot;`callme` is not installed.&quot;</span></span>
+<span id="cb5-56"><a href="#cb5-56" tabindex="-1"></a>} <span class="cf">else</span> <span class="cf">if</span> (.Platform<span class="sc">$</span>OS.type <span class="sc">==</span> <span class="st">&quot;windows&quot;</span>) {</span>
+<span id="cb5-57"><a href="#cb5-57" tabindex="-1"></a>  callme_runtime_reason <span class="ot">&lt;-</span> <span class="fu">paste</span>(</span>
+<span id="cb5-58"><a href="#cb5-58" tabindex="-1"></a>    <span class="st">&quot;`callme` comparisons are skipped on Windows during vignette builds&quot;</span>,</span>
+<span id="cb5-59"><a href="#cb5-59" tabindex="-1"></a>    <span class="st">&quot;because the helper DLL compilation step is not reliable in CI.&quot;</span></span>
+<span id="cb5-60"><a href="#cb5-60" tabindex="-1"></a>  )</span>
+<span id="cb5-61"><a href="#cb5-61" tabindex="-1"></a>} <span class="cf">else</span> {</span>
+<span id="cb5-62"><a href="#cb5-62" tabindex="-1"></a>  callme_probe <span class="ot">&lt;-</span> <span class="fu">tryCatch</span>(</span>
+<span id="cb5-63"><a href="#cb5-63" tabindex="-1"></a>    {</span>
+<span id="cb5-64"><a href="#cb5-64" tabindex="-1"></a>      <span class="fu">build_and_dispose_callme_module</span>()</span>
+<span id="cb5-65"><a href="#cb5-65" tabindex="-1"></a>      <span class="cn">NULL</span></span>
+<span id="cb5-66"><a href="#cb5-66" tabindex="-1"></a>    },</span>
+<span id="cb5-67"><a href="#cb5-67" tabindex="-1"></a>    <span class="at">error =</span> identity</span>
+<span id="cb5-68"><a href="#cb5-68" tabindex="-1"></a>  )</span>
+<span id="cb5-69"><a href="#cb5-69" tabindex="-1"></a></span>
+<span id="cb5-70"><a href="#cb5-70" tabindex="-1"></a>  <span class="cf">if</span> (<span class="fu">inherits</span>(callme_probe, <span class="st">&quot;error&quot;</span>)) {</span>
+<span id="cb5-71"><a href="#cb5-71" tabindex="-1"></a>    callme_runtime_reason <span class="ot">&lt;-</span> <span class="fu">paste</span>(</span>
+<span id="cb5-72"><a href="#cb5-72" tabindex="-1"></a>      <span class="st">&quot;`callme` comparisons were skipped because runtime compilation failed:&quot;</span>,</span>
+<span id="cb5-73"><a href="#cb5-73" tabindex="-1"></a>      <span class="fu">conditionMessage</span>(callme_probe)</span>
+<span id="cb5-74"><a href="#cb5-74" tabindex="-1"></a>    )</span>
+<span id="cb5-75"><a href="#cb5-75" tabindex="-1"></a>  } <span class="cf">else</span> {</span>
+<span id="cb5-76"><a href="#cb5-76" tabindex="-1"></a>    can_run_callme <span class="ot">&lt;-</span> <span class="cn">TRUE</span></span>
+<span id="cb5-77"><a href="#cb5-77" tabindex="-1"></a>  }</span>
+<span id="cb5-78"><a href="#cb5-78" tabindex="-1"></a>}</span>
+<span id="cb5-79"><a href="#cb5-79" tabindex="-1"></a></span>
+<span id="cb5-80"><a href="#cb5-80" tabindex="-1"></a>can_run_benchmarks <span class="ot">&lt;-</span> can_run_callme <span class="sc">&amp;&amp;</span> has_bench</span>
+<span id="cb5-81"><a href="#cb5-81" tabindex="-1"></a></span>
+<span id="cb5-82"><a href="#cb5-82" tabindex="-1"></a><span class="cf">if</span> (<span class="fu">is.null</span>(callme_runtime_reason) <span class="sc">&amp;&amp;</span> <span class="sc">!</span>has_bench) {</span>
+<span id="cb5-83"><a href="#cb5-83" tabindex="-1"></a>  callme_runtime_reason <span class="ot">&lt;-</span> <span class="st">&quot;`bench` is not installed.&quot;</span></span>
+<span id="cb5-84"><a href="#cb5-84" tabindex="-1"></a>} <span class="cf">else</span> <span class="cf">if</span> (<span class="fu">is.null</span>(callme_runtime_reason)) {</span>
+<span id="cb5-85"><a href="#cb5-85" tabindex="-1"></a>  callme_runtime_reason <span class="ot">&lt;-</span> <span class="st">&quot;Executable comparisons are enabled.&quot;</span></span>
+<span id="cb5-86"><a href="#cb5-86" tabindex="-1"></a>}</span>
+<span id="cb5-87"><a href="#cb5-87" tabindex="-1"></a></span>
+<span id="cb5-88"><a href="#cb5-88" tabindex="-1"></a>with_benchmark_modules <span class="ot">&lt;-</span> <span class="cf">function</span>(fun) {</span>
+<span id="cb5-89"><a href="#cb5-89" tabindex="-1"></a>  rt_mod <span class="ot">&lt;-</span> <span class="fu">build_rtinycc_module</span>()</span>
+<span id="cb5-90"><a href="#cb5-90" tabindex="-1"></a>  cm_mod <span class="ot">&lt;-</span> <span class="fu">build_callme_module</span>()</span>
+<span id="cb5-91"><a href="#cb5-91" tabindex="-1"></a>  dll_paths <span class="ot">&lt;-</span> <span class="fu">attr</span>(cm_mod, <span class="st">&quot;dll_paths&quot;</span>, <span class="at">exact =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb5-92"><a href="#cb5-92" tabindex="-1"></a></span>
+<span id="cb5-93"><a href="#cb5-93" tabindex="-1"></a>  <span class="fu">on.exit</span>({</span>
+<span id="cb5-94"><a href="#cb5-94" tabindex="-1"></a>    <span class="fu">rm</span>(rt_mod, cm_mod)</span>
+<span id="cb5-95"><a href="#cb5-95" tabindex="-1"></a>    <span class="fu">gc</span>()</span>
+<span id="cb5-96"><a href="#cb5-96" tabindex="-1"></a>    <span class="fu">unload_callme_dlls</span>(dll_paths)</span>
+<span id="cb5-97"><a href="#cb5-97" tabindex="-1"></a>  }, <span class="at">add =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb5-98"><a href="#cb5-98" tabindex="-1"></a></span>
+<span id="cb5-99"><a href="#cb5-99" tabindex="-1"></a>  <span class="fu">fun</span>(rt_mod, cm_mod)</span>
+<span id="cb5-100"><a href="#cb5-100" tabindex="-1"></a>}</span>
+<span id="cb5-101"><a href="#cb5-101" tabindex="-1"></a></span>
+<span id="cb5-102"><a href="#cb5-102" tabindex="-1"></a>median_elapsed <span class="ot">&lt;-</span> <span class="cf">function</span>(expr, <span class="at">times =</span> <span class="dv">3</span><span class="dt">L</span>) {</span>
+<span id="cb5-103"><a href="#cb5-103" tabindex="-1"></a>  expr <span class="ot">&lt;-</span> <span class="fu">substitute</span>(expr)</span>
+<span id="cb5-104"><a href="#cb5-104" tabindex="-1"></a>  env <span class="ot">&lt;-</span> <span class="fu">parent.frame</span>()</span>
+<span id="cb5-105"><a href="#cb5-105" tabindex="-1"></a>  stats<span class="sc">::</span><span class="fu">median</span>(<span class="fu">replicate</span>(</span>
+<span id="cb5-106"><a href="#cb5-106" tabindex="-1"></a>    times,</span>
+<span id="cb5-107"><a href="#cb5-107" tabindex="-1"></a>    {</span>
+<span id="cb5-108"><a href="#cb5-108" tabindex="-1"></a>      <span class="fu">gc</span>()</span>
+<span id="cb5-109"><a href="#cb5-109" tabindex="-1"></a>      t0 <span class="ot">&lt;-</span> <span class="fu">proc.time</span>()[[<span class="st">&quot;elapsed&quot;</span>]]</span>
+<span id="cb5-110"><a href="#cb5-110" tabindex="-1"></a>      <span class="fu">eval</span>(expr, <span class="at">envir =</span> env)</span>
+<span id="cb5-111"><a href="#cb5-111" tabindex="-1"></a>      <span class="fu">proc.time</span>()[[<span class="st">&quot;elapsed&quot;</span>]] <span class="sc">-</span> t0</span>
+<span id="cb5-112"><a href="#cb5-112" tabindex="-1"></a>    }</span>
+<span id="cb5-113"><a href="#cb5-113" tabindex="-1"></a>  ))</span>
+<span id="cb5-114"><a href="#cb5-114" tabindex="-1"></a>}</span>
+<span id="cb5-115"><a href="#cb5-115" tabindex="-1"></a></span>
+<span id="cb5-116"><a href="#cb5-116" tabindex="-1"></a>run_noop <span class="ot">&lt;-</span> <span class="cf">function</span>(fun, n) {</span>
+<span id="cb5-117"><a href="#cb5-117" tabindex="-1"></a>  <span class="cf">for</span> (i <span class="cf">in</span> <span class="fu">seq_len</span>(n)) {</span>
+<span id="cb5-118"><a href="#cb5-118" tabindex="-1"></a>    <span class="fu">fun</span>()</span>
+<span id="cb5-119"><a href="#cb5-119" tabindex="-1"></a>  }</span>
+<span id="cb5-120"><a href="#cb5-120" tabindex="-1"></a>  <span class="fu">invisible</span>(<span class="cn">NULL</span>)</span>
+<span id="cb5-121"><a href="#cb5-121" tabindex="-1"></a>}</span>
+<span id="cb5-122"><a href="#cb5-122" tabindex="-1"></a></span>
+<span id="cb5-123"><a href="#cb5-123" tabindex="-1"></a>run_rand <span class="ot">&lt;-</span> <span class="cf">function</span>(fun, n, reps) {</span>
+<span id="cb5-124"><a href="#cb5-124" tabindex="-1"></a>  <span class="cf">for</span> (i <span class="cf">in</span> <span class="fu">seq_len</span>(reps)) {</span>
+<span id="cb5-125"><a href="#cb5-125" tabindex="-1"></a>    <span class="fu">invisible</span>(<span class="fu">fun</span>(n))</span>
+<span id="cb5-126"><a href="#cb5-126" tabindex="-1"></a>  }</span>
+<span id="cb5-127"><a href="#cb5-127" tabindex="-1"></a>  <span class="fu">invisible</span>(<span class="cn">NULL</span>)</span>
+<span id="cb5-128"><a href="#cb5-128" tabindex="-1"></a>}</span>
+<span id="cb5-129"><a href="#cb5-129" tabindex="-1"></a></span>
+<span id="cb5-130"><a href="#cb5-130" tabindex="-1"></a>run_fill <span class="ot">&lt;-</span> <span class="cf">function</span>(fun, n, reps) {</span>
+<span id="cb5-131"><a href="#cb5-131" tabindex="-1"></a>  <span class="cf">for</span> (i <span class="cf">in</span> <span class="fu">seq_len</span>(reps)) {</span>
+<span id="cb5-132"><a href="#cb5-132" tabindex="-1"></a>    out <span class="ot">&lt;-</span> <span class="fu">numeric</span>(n)</span>
+<span id="cb5-133"><a href="#cb5-133" tabindex="-1"></a>    <span class="fu">invisible</span>(<span class="fu">fun</span>(out, n))</span>
+<span id="cb5-134"><a href="#cb5-134" tabindex="-1"></a>  }</span>
+<span id="cb5-135"><a href="#cb5-135" tabindex="-1"></a>  <span class="fu">invisible</span>(<span class="cn">NULL</span>)</span>
+<span id="cb5-136"><a href="#cb5-136" tabindex="-1"></a>}</span>
+<span id="cb5-137"><a href="#cb5-137" tabindex="-1"></a></span>
+<span id="cb5-138"><a href="#cb5-138" tabindex="-1"></a>rtinycc_recipe <span class="ot">&lt;-</span> <span class="fu">tcc_ffi</span>() <span class="sc">|&gt;</span></span>
+<span id="cb5-139"><a href="#cb5-139" tabindex="-1"></a>  <span class="fu">tcc_source</span>(rtinycc_code) <span class="sc">|&gt;</span></span>
+<span id="cb5-140"><a href="#cb5-140" tabindex="-1"></a>  <span class="fu">tcc_bind</span>(</span>
+<span id="cb5-141"><a href="#cb5-141" tabindex="-1"></a>    <span class="at">noop =</span> <span class="fu">list</span>(<span class="at">args =</span> <span class="fu">list</span>(), <span class="at">returns =</span> <span class="st">&quot;void&quot;</span>),</span>
+<span id="cb5-142"><a href="#cb5-142" tabindex="-1"></a>    <span class="at">fill_rand =</span> <span class="fu">list</span>(<span class="at">args =</span> <span class="fu">list</span>(<span class="st">&quot;numeric_array&quot;</span>, <span class="st">&quot;i32&quot;</span>), <span class="at">returns =</span> <span class="st">&quot;void&quot;</span>),</span>
+<span id="cb5-143"><a href="#cb5-143" tabindex="-1"></a>    <span class="at">rand_unif =</span> <span class="fu">list</span>(</span>
+<span id="cb5-144"><a href="#cb5-144" tabindex="-1"></a>      <span class="at">args =</span> <span class="fu">list</span>(<span class="st">&quot;i32&quot;</span>),</span>
+<span id="cb5-145"><a href="#cb5-145" tabindex="-1"></a>      <span class="at">returns =</span> <span class="fu">list</span>(<span class="at">type =</span> <span class="st">&quot;numeric_array&quot;</span>, <span class="at">length_arg =</span> <span class="dv">1</span>, <span class="at">free =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb5-146"><a href="#cb5-146" tabindex="-1"></a>    )</span>
+<span id="cb5-147"><a href="#cb5-147" tabindex="-1"></a>  )</span>
+<span id="cb5-148"><a href="#cb5-148" tabindex="-1"></a></span>
+<span id="cb5-149"><a href="#cb5-149" tabindex="-1"></a>generated_code <span class="ot">&lt;-</span> Rtinycc<span class="sc">:::</span><span class="fu">generate_ffi_code</span>(</span>
+<span id="cb5-150"><a href="#cb5-150" tabindex="-1"></a>  <span class="at">symbols =</span> rtinycc_recipe<span class="sc">$</span>symbols,</span>
+<span id="cb5-151"><a href="#cb5-151" tabindex="-1"></a>  <span class="at">headers =</span> rtinycc_recipe<span class="sc">$</span>headers,</span>
+<span id="cb5-152"><a href="#cb5-152" tabindex="-1"></a>  <span class="at">c_code =</span> rtinycc_recipe<span class="sc">$</span>c_code,</span>
+<span id="cb5-153"><a href="#cb5-153" tabindex="-1"></a>  <span class="at">is_external =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb5-154"><a href="#cb5-154" tabindex="-1"></a>  <span class="at">structs =</span> rtinycc_recipe<span class="sc">$</span>structs,</span>
+<span id="cb5-155"><a href="#cb5-155" tabindex="-1"></a>  <span class="at">unions =</span> rtinycc_recipe<span class="sc">$</span>unions,</span>
+<span id="cb5-156"><a href="#cb5-156" tabindex="-1"></a>  <span class="at">enums =</span> rtinycc_recipe<span class="sc">$</span>enums,</span>
+<span id="cb5-157"><a href="#cb5-157" tabindex="-1"></a>  <span class="at">globals =</span> rtinycc_recipe<span class="sc">$</span>globals,</span>
+<span id="cb5-158"><a href="#cb5-158" tabindex="-1"></a>  <span class="at">container_of =</span> rtinycc_recipe<span class="sc">$</span>container_of,</span>
+<span id="cb5-159"><a href="#cb5-159" tabindex="-1"></a>  <span class="at">field_addr =</span> rtinycc_recipe<span class="sc">$</span>field_addr,</span>
+<span id="cb5-160"><a href="#cb5-160" tabindex="-1"></a>  <span class="at">struct_raw_access =</span> rtinycc_recipe<span class="sc">$</span>struct_raw_access,</span>
+<span id="cb5-161"><a href="#cb5-161" tabindex="-1"></a>  <span class="at">introspect =</span> rtinycc_recipe<span class="sc">$</span>introspect</span>
+<span id="cb5-162"><a href="#cb5-162" tabindex="-1"></a>)</span></code></pre></div>
+</div>
+<div id="availability" class="section level2">
+<h2>Availability</h2>
+<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a>has_callme</span>
+<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
+<p>If <code>callme</code> or <code>bench</code> is unavailable, or if
+the current build environment cannot compile the temporary
+<code>callme</code> helper DLL, the executable comparisons below are
+skipped.</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a>has_bench</span>
+<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a>can_run_callme</span>
+<span id="cb8-2"><a href="#cb8-2" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a>can_run_benchmarks</span>
+<span id="cb9-2"><a href="#cb9-2" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
+<p>Current comparison status:</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a>callme_runtime_reason</span>
+<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a><span class="co">#&gt; [1] &quot;Executable comparisons are enabled.&quot;</span></span></code></pre></div>
+</div>
+<div id="compilation-latency" class="section level2">
+<h2>Compilation Latency</h2>
+<p>This measures module build time, not call time.</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a>compile_times <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(</span>
+<span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a>  <span class="at">implementation =</span> <span class="fu">c</span>(<span class="st">&quot;Rtinycc&quot;</span>, <span class="st">&quot;callme&quot;</span>),</span>
+<span id="cb11-3"><a href="#cb11-3" tabindex="-1"></a>  <span class="at">seconds =</span> <span class="fu">c</span>(</span>
+<span id="cb11-4"><a href="#cb11-4" tabindex="-1"></a>    <span class="fu">median_elapsed</span>(<span class="fu">build_rtinycc_module</span>(), <span class="at">times =</span> <span class="dv">3</span><span class="dt">L</span>),</span>
+<span id="cb11-5"><a href="#cb11-5" tabindex="-1"></a>    <span class="fu">median_elapsed</span>(<span class="fu">build_and_dispose_callme_module</span>(), <span class="at">times =</span> <span class="dv">3</span><span class="dt">L</span>)</span>
+<span id="cb11-6"><a href="#cb11-6" tabindex="-1"></a>  )</span>
+<span id="cb11-7"><a href="#cb11-7" tabindex="-1"></a>)</span>
+<span id="cb11-8"><a href="#cb11-8" tabindex="-1"></a></span>
+<span id="cb11-9"><a href="#cb11-9" tabindex="-1"></a>compile_times<span class="sc">$</span>milliseconds <span class="ot">&lt;-</span> <span class="fu">round</span>(compile_times<span class="sc">$</span>seconds <span class="sc">*</span> <span class="dv">1000</span>, <span class="dv">1</span>)</span>
+<span id="cb11-10"><a href="#cb11-10" tabindex="-1"></a>compile_times</span>
+<span id="cb11-11"><a href="#cb11-11" tabindex="-1"></a><span class="co">#&gt;   implementation seconds milliseconds</span></span>
+<span id="cb11-12"><a href="#cb11-12" tabindex="-1"></a><span class="co">#&gt; 1        Rtinycc   0.011           11</span></span>
+<span id="cb11-13"><a href="#cb11-13" tabindex="-1"></a><span class="co">#&gt; 2         callme   0.207          207</span></span></code></pre></div>
+<p>The expected pattern is:</p>
+<ul>
+<li><code>Rtinycc</code> wins clearly on tiny compile latency because it
+stays in-process and does not shell out to <code>R CMD SHLIB</code></li>
+<li><code>callme</code> pays the ordinary shared-library toolchain
+cost</li>
+</ul>
+</div>
+<div id="generated-wrapper-code" class="section level2">
+<h2>Generated Wrapper Code</h2>
+<p>The generated code makes the extra return-path work explicit. In
+particular, the <code>rand_unif()</code> wrapper allocates an R vector,
+<code>memcpy()</code>s the native <code>double*</code> buffer into it,
+then <code>free()</code>s the original buffer. In contrast,
+<code>fill_rand()</code> uses the borrowed <code>numeric_array</code>
+input path.</p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a>Rtinycc<span class="sc">:::</span><span class="fu">rtinycc_c_block</span>(generated_code)</span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre class="sourceCode c rtinycc"><code class="sourceCode c"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a><span class="co">/* TinyCC workaround: _Complex not supported */</span></span>
+<span id="cb13-2"><a href="#cb13-2" tabindex="-1"></a><span class="pp">#define _Complex</span></span>
+<span id="cb13-3"><a href="#cb13-3" tabindex="-1"></a></span>
+<span id="cb13-4"><a href="#cb13-4" tabindex="-1"></a><span class="pp">#include </span><span class="im">&lt;R.h&gt;</span></span>
+<span id="cb13-5"><a href="#cb13-5" tabindex="-1"></a><span class="pp">#include </span><span class="im">&lt;Rinternals.h&gt;</span></span>
+<span id="cb13-6"><a href="#cb13-6" tabindex="-1"></a><span class="pp">#ifndef STRING_PTR_RO</span></span>
+<span id="cb13-7"><a href="#cb13-7" tabindex="-1"></a><span class="pp">#define STRING_PTR_RO STRING_PTR</span></span>
+<span id="cb13-8"><a href="#cb13-8" tabindex="-1"></a><span class="pp">#endif</span></span>
+<span id="cb13-9"><a href="#cb13-9" tabindex="-1"></a><span class="dt">void</span> RC_free_finalizer<span class="op">(</span>SEXP ext<span class="op">);</span></span>
+<span id="cb13-10"><a href="#cb13-10" tabindex="-1"></a><span class="dt">void</span> RC_owned_native_finalizer<span class="op">(</span>SEXP ext<span class="op">);</span></span>
+<span id="cb13-11"><a href="#cb13-11" tabindex="-1"></a>SEXP RC_make_borrowed_view<span class="op">(</span><span class="dt">void</span> <span class="op">*</span>ptr<span class="op">,</span> SEXP tag<span class="op">,</span> SEXP owner<span class="op">);</span></span>
+<span id="cb13-12"><a href="#cb13-12" tabindex="-1"></a>SEXP RC_make_unowned_ptr<span class="op">(</span><span class="dt">void</span> <span class="op">*</span>ptr<span class="op">,</span> SEXP tag<span class="op">);</span></span>
+<span id="cb13-13"><a href="#cb13-13" tabindex="-1"></a>SEXP RC_make_owned_ptr<span class="op">(</span><span class="dt">void</span> <span class="op">*</span>ptr<span class="op">,</span> SEXP tag<span class="op">);</span></span>
+<span id="cb13-14"><a href="#cb13-14" tabindex="-1"></a>SEXP RC_make_owned_composite_ptr<span class="op">(</span><span class="dt">void</span> <span class="op">*</span>ptr<span class="op">,</span> SEXP tag<span class="op">);</span></span>
+<span id="cb13-15"><a href="#cb13-15" tabindex="-1"></a></span>
+<span id="cb13-16"><a href="#cb13-16" tabindex="-1"></a><span class="pp">#include </span><span class="im">&lt;stdint.h&gt;</span></span>
+<span id="cb13-17"><a href="#cb13-17" tabindex="-1"></a><span class="pp">#include </span><span class="im">&lt;stdbool.h&gt;</span></span>
+<span id="cb13-18"><a href="#cb13-18" tabindex="-1"></a><span class="pp">#include </span><span class="im">&lt;stddef.h&gt;</span></span>
+<span id="cb13-19"><a href="#cb13-19" tabindex="-1"></a><span class="pp">#include </span><span class="im">&lt;limits.h&gt;</span></span>
+<span id="cb13-20"><a href="#cb13-20" tabindex="-1"></a><span class="pp">#include </span><span class="im">&lt;math.h&gt;</span></span>
+<span id="cb13-21"><a href="#cb13-21" tabindex="-1"></a><span class="pp">#include </span><span class="im">&lt;string.h&gt;</span></span>
+<span id="cb13-22"><a href="#cb13-22" tabindex="-1"></a></span>
+<span id="cb13-23"><a href="#cb13-23" tabindex="-1"></a><span class="co">/* User code */</span></span>
+<span id="cb13-24"><a href="#cb13-24" tabindex="-1"></a><span class="pp">#include </span><span class="im">&lt;R.h&gt;</span></span>
+<span id="cb13-25"><a href="#cb13-25" tabindex="-1"></a><span class="pp">#include </span><span class="im">&lt;Rinternals.h&gt;</span></span>
+<span id="cb13-26"><a href="#cb13-26" tabindex="-1"></a><span class="pp">#include </span><span class="im">&lt;Rmath.h&gt;</span></span>
+<span id="cb13-27"><a href="#cb13-27" tabindex="-1"></a><span class="pp">#include </span><span class="im">&lt;stdlib.h&gt;</span></span>
+<span id="cb13-28"><a href="#cb13-28" tabindex="-1"></a></span>
+<span id="cb13-29"><a href="#cb13-29" tabindex="-1"></a><span class="dt">void</span> noop<span class="op">(</span><span class="dt">void</span><span class="op">)</span> <span class="op">{}</span></span>
+<span id="cb13-30"><a href="#cb13-30" tabindex="-1"></a></span>
+<span id="cb13-31"><a href="#cb13-31" tabindex="-1"></a><span class="dt">void</span> fill_rand<span class="op">(</span><span class="dt">double</span><span class="op">*</span> out<span class="op">,</span> <span class="dt">int</span> n<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb13-32"><a href="#cb13-32" tabindex="-1"></a>  <span class="cf">if</span> <span class="op">(</span>n <span class="op">&lt;</span> <span class="dv">0</span><span class="op">)</span> <span class="op">{</span></span>
+<span id="cb13-33"><a href="#cb13-33" tabindex="-1"></a>    Rf_error<span class="op">(</span><span class="st">&quot;n must be non-negative&quot;</span><span class="op">);</span></span>
+<span id="cb13-34"><a href="#cb13-34" tabindex="-1"></a>  <span class="op">}</span></span>
+<span id="cb13-35"><a href="#cb13-35" tabindex="-1"></a></span>
+<span id="cb13-36"><a href="#cb13-36" tabindex="-1"></a>  GetRNGstate<span class="op">();</span></span>
+<span id="cb13-37"><a href="#cb13-37" tabindex="-1"></a>  <span class="cf">for</span> <span class="op">(</span><span class="dt">int</span> i <span class="op">=</span> <span class="dv">0</span><span class="op">;</span> i <span class="op">&lt;</span> n<span class="op">;</span> <span class="op">++</span>i<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb13-38"><a href="#cb13-38" tabindex="-1"></a>    out<span class="op">[</span>i<span class="op">]</span> <span class="op">=</span> unif_rand<span class="op">();</span></span>
+<span id="cb13-39"><a href="#cb13-39" tabindex="-1"></a>  <span class="op">}</span></span>
+<span id="cb13-40"><a href="#cb13-40" tabindex="-1"></a>  PutRNGstate<span class="op">();</span></span>
+<span id="cb13-41"><a href="#cb13-41" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb13-42"><a href="#cb13-42" tabindex="-1"></a></span>
+<span id="cb13-43"><a href="#cb13-43" tabindex="-1"></a><span class="dt">double</span><span class="op">*</span> rand_unif<span class="op">(</span><span class="dt">int</span> n<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb13-44"><a href="#cb13-44" tabindex="-1"></a>  <span class="cf">if</span> <span class="op">(</span>n <span class="op">&lt;</span> <span class="dv">0</span><span class="op">)</span> <span class="op">{</span></span>
+<span id="cb13-45"><a href="#cb13-45" tabindex="-1"></a>    Rf_error<span class="op">(</span><span class="st">&quot;n must be non-negative&quot;</span><span class="op">);</span></span>
+<span id="cb13-46"><a href="#cb13-46" tabindex="-1"></a>  <span class="op">}</span></span>
+<span id="cb13-47"><a href="#cb13-47" tabindex="-1"></a>  <span class="cf">if</span> <span class="op">(</span>n <span class="op">==</span> <span class="dv">0</span><span class="op">)</span> <span class="op">{</span></span>
+<span id="cb13-48"><a href="#cb13-48" tabindex="-1"></a>    <span class="cf">return</span> <span class="op">(</span><span class="dt">double</span><span class="op">*)</span> malloc<span class="op">(</span><span class="kw">sizeof</span><span class="op">(</span><span class="dt">double</span><span class="op">));</span></span>
+<span id="cb13-49"><a href="#cb13-49" tabindex="-1"></a>  <span class="op">}</span></span>
+<span id="cb13-50"><a href="#cb13-50" tabindex="-1"></a></span>
+<span id="cb13-51"><a href="#cb13-51" tabindex="-1"></a>  <span class="dt">double</span> <span class="op">*</span>out <span class="op">=</span> <span class="op">(</span><span class="dt">double</span><span class="op">*)</span> malloc<span class="op">(</span><span class="kw">sizeof</span><span class="op">(</span><span class="dt">double</span><span class="op">)</span> <span class="op">*</span> <span class="op">(</span><span class="dt">size_t</span><span class="op">)</span> n<span class="op">);</span></span>
+<span id="cb13-52"><a href="#cb13-52" tabindex="-1"></a>  <span class="cf">if</span> <span class="op">(!</span>out<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb13-53"><a href="#cb13-53" tabindex="-1"></a>    Rf_error<span class="op">(</span><span class="st">&quot;malloc failed&quot;</span><span class="op">);</span></span>
+<span id="cb13-54"><a href="#cb13-54" tabindex="-1"></a>  <span class="op">}</span></span>
+<span id="cb13-55"><a href="#cb13-55" tabindex="-1"></a></span>
+<span id="cb13-56"><a href="#cb13-56" tabindex="-1"></a>  GetRNGstate<span class="op">();</span></span>
+<span id="cb13-57"><a href="#cb13-57" tabindex="-1"></a>  <span class="cf">for</span> <span class="op">(</span><span class="dt">int</span> i <span class="op">=</span> <span class="dv">0</span><span class="op">;</span> i <span class="op">&lt;</span> n<span class="op">;</span> <span class="op">++</span>i<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb13-58"><a href="#cb13-58" tabindex="-1"></a>    out<span class="op">[</span>i<span class="op">]</span> <span class="op">=</span> unif_rand<span class="op">();</span></span>
+<span id="cb13-59"><a href="#cb13-59" tabindex="-1"></a>  <span class="op">}</span></span>
+<span id="cb13-60"><a href="#cb13-60" tabindex="-1"></a>  PutRNGstate<span class="op">();</span></span>
+<span id="cb13-61"><a href="#cb13-61" tabindex="-1"></a>  <span class="cf">return</span> out<span class="op">;</span></span>
+<span id="cb13-62"><a href="#cb13-62" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb13-63"><a href="#cb13-63" tabindex="-1"></a></span>
+<span id="cb13-64"><a href="#cb13-64" tabindex="-1"></a><span class="co">/* R callable wrappers for bound symbols */</span></span>
+<span id="cb13-65"><a href="#cb13-65" tabindex="-1"></a>SEXP R_wrap_noop<span class="op">(</span><span class="dt">void</span><span class="op">)</span> <span class="op">{</span></span>
+<span id="cb13-66"><a href="#cb13-66" tabindex="-1"></a>  <span class="co">// No arguments</span></span>
+<span id="cb13-67"><a href="#cb13-67" tabindex="-1"></a></span>
+<span id="cb13-68"><a href="#cb13-68" tabindex="-1"></a>  <span class="co">// Call and return</span></span>
+<span id="cb13-69"><a href="#cb13-69" tabindex="-1"></a>   noop<span class="op">();</span></span>
+<span id="cb13-70"><a href="#cb13-70" tabindex="-1"></a>     <span class="cf">return</span> R_NilValue<span class="op">;</span></span>
+<span id="cb13-71"><a href="#cb13-71" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb13-72"><a href="#cb13-72" tabindex="-1"></a></span>
+<span id="cb13-73"><a href="#cb13-73" tabindex="-1"></a></span>
+<span id="cb13-74"><a href="#cb13-74" tabindex="-1"></a>SEXP R_wrap_fill_rand<span class="op">(</span>SEXP arg1_<span class="op">,</span> SEXP arg2_<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb13-75"><a href="#cb13-75" tabindex="-1"></a>  <span class="cf">if</span> <span class="op">(</span>TYPEOF<span class="op">(</span>arg1_<span class="op">)</span> <span class="op">!=</span> REALSXP<span class="op">)</span> Rf_error<span class="op">(</span><span class="st">&quot;expected numeric vector for argument &#39;arg1&#39;&quot;</span><span class="op">);</span></span>
+<span id="cb13-76"><a href="#cb13-76" tabindex="-1"></a>  <span class="dt">double</span><span class="op">*</span> arg1 <span class="op">=</span> REAL<span class="op">(</span>arg1_<span class="op">);</span></span>
+<span id="cb13-77"><a href="#cb13-77" tabindex="-1"></a>  <span class="dt">int</span> _arg2 <span class="op">=</span> asInteger<span class="op">(</span>arg2_<span class="op">);</span></span>
+<span id="cb13-78"><a href="#cb13-78" tabindex="-1"></a>  <span class="cf">if</span> <span class="op">(</span>_arg2 <span class="op">==</span> NA_INTEGER<span class="op">)</span> Rf_error<span class="op">(</span><span class="st">&quot;integer value is NA&quot;</span><span class="op">);</span></span>
+<span id="cb13-79"><a href="#cb13-79" tabindex="-1"></a>  <span class="cf">if</span> <span class="op">(</span>_arg2 <span class="op">&lt;</span> INT32_MIN <span class="op">||</span> _arg2 <span class="op">&gt;</span> INT32_MAX<span class="op">)</span> Rf_error<span class="op">(</span><span class="st">&quot;i32 out of range&quot;</span><span class="op">);</span></span>
+<span id="cb13-80"><a href="#cb13-80" tabindex="-1"></a>  <span class="dt">int32_t</span> arg2 <span class="op">=</span> <span class="op">(</span><span class="dt">int32_t</span><span class="op">)</span>_arg2<span class="op">;</span></span>
+<span id="cb13-81"><a href="#cb13-81" tabindex="-1"></a></span>
+<span id="cb13-82"><a href="#cb13-82" tabindex="-1"></a>  <span class="co">// Call and return</span></span>
+<span id="cb13-83"><a href="#cb13-83" tabindex="-1"></a>   fill_rand<span class="op">(</span>arg1<span class="op">,</span> arg2<span class="op">);</span></span>
+<span id="cb13-84"><a href="#cb13-84" tabindex="-1"></a>     <span class="cf">return</span> R_NilValue<span class="op">;</span></span>
+<span id="cb13-85"><a href="#cb13-85" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb13-86"><a href="#cb13-86" tabindex="-1"></a></span>
+<span id="cb13-87"><a href="#cb13-87" tabindex="-1"></a></span>
+<span id="cb13-88"><a href="#cb13-88" tabindex="-1"></a>SEXP R_wrap_rand_unif<span class="op">(</span>SEXP arg1_<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb13-89"><a href="#cb13-89" tabindex="-1"></a>  <span class="dt">int</span> _arg1 <span class="op">=</span> asInteger<span class="op">(</span>arg1_<span class="op">);</span></span>
+<span id="cb13-90"><a href="#cb13-90" tabindex="-1"></a>  <span class="cf">if</span> <span class="op">(</span>_arg1 <span class="op">==</span> NA_INTEGER<span class="op">)</span> Rf_error<span class="op">(</span><span class="st">&quot;integer value is NA&quot;</span><span class="op">);</span></span>
+<span id="cb13-91"><a href="#cb13-91" tabindex="-1"></a>  <span class="cf">if</span> <span class="op">(</span>_arg1 <span class="op">&lt;</span> INT32_MIN <span class="op">||</span> _arg1 <span class="op">&gt;</span> INT32_MAX<span class="op">)</span> Rf_error<span class="op">(</span><span class="st">&quot;i32 out of range&quot;</span><span class="op">);</span></span>
+<span id="cb13-92"><a href="#cb13-92" tabindex="-1"></a>  <span class="dt">int32_t</span> arg1 <span class="op">=</span> <span class="op">(</span><span class="dt">int32_t</span><span class="op">)</span>_arg1<span class="op">;</span></span>
+<span id="cb13-93"><a href="#cb13-93" tabindex="-1"></a></span>
+<span id="cb13-94"><a href="#cb13-94" tabindex="-1"></a>  <span class="co">// Call and return</span></span>
+<span id="cb13-95"><a href="#cb13-95" tabindex="-1"></a>   <span class="dt">double</span><span class="op">*</span> __rtinycc_ret <span class="op">=</span> rand_unif<span class="op">(</span>arg1<span class="op">);</span></span>
+<span id="cb13-96"><a href="#cb13-96" tabindex="-1"></a>   <span class="cf">if</span> <span class="op">(!</span>__rtinycc_ret<span class="op">)</span> <span class="cf">return</span> R_NilValue<span class="op">;</span></span>
+<span id="cb13-97"><a href="#cb13-97" tabindex="-1"></a>   SEXP out <span class="op">=</span> PROTECT<span class="op">(</span>allocVector<span class="op">(</span>REALSXP<span class="op">,</span> arg1<span class="op">));</span></span>
+<span id="cb13-98"><a href="#cb13-98" tabindex="-1"></a>     <span class="cf">if</span> <span class="op">(</span>arg1 <span class="op">&gt;</span> <span class="dv">0</span><span class="op">)</span> memcpy<span class="op">(</span>REAL<span class="op">(</span>out<span class="op">),</span> __rtinycc_ret<span class="op">,</span> <span class="kw">sizeof</span><span class="op">(</span><span class="dt">double</span><span class="op">)</span> <span class="op">*</span> arg1<span class="op">);</span></span>
+<span id="cb13-99"><a href="#cb13-99" tabindex="-1"></a>     <span class="cf">if</span> <span class="op">(</span>__rtinycc_ret<span class="op">)</span> free<span class="op">(</span>__rtinycc_ret<span class="op">);</span></span>
+<span id="cb13-100"><a href="#cb13-100" tabindex="-1"></a>     UNPROTECT<span class="op">(</span><span class="dv">1</span><span class="op">);</span></span>
+<span id="cb13-101"><a href="#cb13-101" tabindex="-1"></a>     <span class="cf">return</span> out<span class="op">;</span></span>
+<span id="cb13-102"><a href="#cb13-102" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+</div>
+<div id="noop-call-overhead" class="section level2">
+<h2><code>noop()</code> Call Overhead</h2>
+<p>This is the smallest useful call path. It approximates the lower
+bound on call overhead above a plain <code>.Call()</code> entry
+point.</p>
+<div class="sourceCode" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" tabindex="-1"></a>noop_bench <span class="ot">&lt;-</span> <span class="fu">with_benchmark_modules</span>(<span class="cf">function</span>(rt_mod, cm_mod) {</span>
+<span id="cb14-2"><a href="#cb14-2" tabindex="-1"></a>  n_noop <span class="ot">&lt;-</span> <span class="dv">1000</span><span class="dt">L</span></span>
+<span id="cb14-3"><a href="#cb14-3" tabindex="-1"></a></span>
+<span id="cb14-4"><a href="#cb14-4" tabindex="-1"></a>  bench<span class="sc">::</span><span class="fu">mark</span>(</span>
+<span id="cb14-5"><a href="#cb14-5" tabindex="-1"></a>    <span class="at">Rtinycc =</span> <span class="fu">run_noop</span>(rt_mod<span class="sc">$</span>noop, n_noop),</span>
+<span id="cb14-6"><a href="#cb14-6" tabindex="-1"></a>    <span class="at">callme =</span> <span class="fu">run_noop</span>(cm_mod<span class="sc">$</span>noop, n_noop),</span>
+<span id="cb14-7"><a href="#cb14-7" tabindex="-1"></a>    <span class="at">iterations =</span> <span class="dv">20</span>,</span>
+<span id="cb14-8"><a href="#cb14-8" tabindex="-1"></a>    <span class="at">check =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb14-9"><a href="#cb14-9" tabindex="-1"></a>    <span class="at">memory =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb14-10"><a href="#cb14-10" tabindex="-1"></a>    <span class="at">filter_gc =</span> <span class="cn">FALSE</span></span>
+<span id="cb14-11"><a href="#cb14-11" tabindex="-1"></a>  )</span>
+<span id="cb14-12"><a href="#cb14-12" tabindex="-1"></a>})</span>
+<span id="cb14-13"><a href="#cb14-13" tabindex="-1"></a></span>
+<span id="cb14-14"><a href="#cb14-14" tabindex="-1"></a>noop_bench</span>
+<span id="cb14-15"><a href="#cb14-15" tabindex="-1"></a><span class="co">#&gt; # A tibble: 2 × 6</span></span>
+<span id="cb14-16"><a href="#cb14-16" tabindex="-1"></a><span class="co">#&gt;   expression      min   median `itr/sec` mem_alloc `gc/sec`</span></span>
+<span id="cb14-17"><a href="#cb14-17" tabindex="-1"></a><span class="co">#&gt;   &lt;bch:expr&gt; &lt;bch:tm&gt; &lt;bch:tm&gt;     &lt;dbl&gt; &lt;bch:byt&gt;    &lt;dbl&gt;</span></span>
+<span id="cb14-18"><a href="#cb14-18" tabindex="-1"></a><span class="co">#&gt; 1 Rtinycc       638µs    680µs     1471.      13KB        0</span></span>
+<span id="cb14-19"><a href="#cb14-19" tabindex="-1"></a><span class="co">#&gt; 2 callme        251µs    255µs     3811.        0B        0</span></span></code></pre></div>
+<p>Interpretation:</p>
+<ul>
+<li>the <code>callme</code> path is close to the cost of a conventional
+<code>.Call()</code> wrapper</li>
+<li>the <code>Rtinycc</code> path adds the generated wrapper layer and
+external-pointer call target</li>
+<li>the difference here is mostly boundary overhead, not useful
+computation</li>
+<li><code>check = TRUE</code> is appropriate here because both
+expressions always return <code>NULL</code></li>
+<li><code>bench</code> also exposes allocation and GC differences
+directly, which is useful for understanding the cost of boxing and
+copying</li>
+</ul>
+</div>
+<div id="fill_randout-n-and-zero-copy-arrays" class="section level2">
+<h2><code>fill_rand(out, n)</code> And Zero-Copy Arrays</h2>
+<p>This is the fairer vector comparison because both implementations
+fill an existing R numeric vector instead of returning a newly allocated
+result.</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" tabindex="-1"></a>fill_bench_n4096 <span class="ot">&lt;-</span> <span class="fu">with_benchmark_modules</span>(<span class="cf">function</span>(rt_mod, cm_mod) {</span>
+<span id="cb15-2"><a href="#cb15-2" tabindex="-1"></a>  bench<span class="sc">::</span><span class="fu">mark</span>(</span>
+<span id="cb15-3"><a href="#cb15-3" tabindex="-1"></a>    <span class="at">Rtinycc =</span> <span class="fu">run_fill</span>(rt_mod<span class="sc">$</span>fill_rand, <span class="dv">4096</span><span class="dt">L</span>, <span class="dv">100</span><span class="dt">L</span>),</span>
+<span id="cb15-4"><a href="#cb15-4" tabindex="-1"></a>    <span class="at">callme =</span> <span class="fu">run_fill</span>(cm_mod<span class="sc">$</span>fill_rand, <span class="dv">4096</span><span class="dt">L</span>, <span class="dv">100</span><span class="dt">L</span>),</span>
+<span id="cb15-5"><a href="#cb15-5" tabindex="-1"></a>    <span class="at">iterations =</span> <span class="dv">20</span>,</span>
+<span id="cb15-6"><a href="#cb15-6" tabindex="-1"></a>    <span class="at">check =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb15-7"><a href="#cb15-7" tabindex="-1"></a>    <span class="at">memory =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb15-8"><a href="#cb15-8" tabindex="-1"></a>    <span class="at">filter_gc =</span> <span class="cn">FALSE</span></span>
+<span id="cb15-9"><a href="#cb15-9" tabindex="-1"></a>  )</span>
+<span id="cb15-10"><a href="#cb15-10" tabindex="-1"></a>})</span>
+<span id="cb15-11"><a href="#cb15-11" tabindex="-1"></a></span>
+<span id="cb15-12"><a href="#cb15-12" tabindex="-1"></a>fill_bench_n4096</span>
+<span id="cb15-13"><a href="#cb15-13" tabindex="-1"></a><span class="co">#&gt; # A tibble: 2 × 6</span></span>
+<span id="cb15-14"><a href="#cb15-14" tabindex="-1"></a><span class="co">#&gt;   expression      min   median `itr/sec` mem_alloc `gc/sec`</span></span>
+<span id="cb15-15"><a href="#cb15-15" tabindex="-1"></a><span class="co">#&gt;   &lt;bch:expr&gt; &lt;bch:tm&gt; &lt;bch:tm&gt;     &lt;dbl&gt; &lt;bch:byt&gt;    &lt;dbl&gt;</span></span>
+<span id="cb15-16"><a href="#cb15-16" tabindex="-1"></a><span class="co">#&gt; 1 Rtinycc      1.72ms   2.66ms      363.    3.15MB     18.2</span></span>
+<span id="cb15-17"><a href="#cb15-17" tabindex="-1"></a><span class="co">#&gt; 2 callme       1.39ms   1.44ms      615.    3.13MB     30.7</span></span></code></pre></div>
+<p>Interpretation:</p>
+<ul>
+<li>both sides now write into ordinary R numeric storage</li>
+<li>this removes the return-copy penalty from the comparison</li>
+<li>the remaining gap is mostly call boundary overhead plus backend code
+quality</li>
+</ul>
+</div>
+<div id="rand_unifn-and-copy-cost" class="section level2">
+<h2><code>rand_unif(n)</code> And Copy Cost</h2>
+<p>Here the implementation work is still small, but the return path
+differs:</p>
+<ul>
+<li><code>callme</code> fills the final R vector directly</li>
+<li><code>Rtinycc</code> fills a native buffer, then the wrapper copies
+into a fresh R vector</li>
+</ul>
+<p>We time both a tiny and a larger return size.</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" tabindex="-1"></a>rand_results <span class="ot">&lt;-</span> <span class="fu">with_benchmark_modules</span>(<span class="cf">function</span>(rt_mod, cm_mod) {</span>
+<span id="cb16-2"><a href="#cb16-2" tabindex="-1"></a>  rand_bench_n1 <span class="ot">&lt;-</span> bench<span class="sc">::</span><span class="fu">mark</span>(</span>
+<span id="cb16-3"><a href="#cb16-3" tabindex="-1"></a>    <span class="at">Rtinycc =</span> <span class="fu">run_rand</span>(rt_mod<span class="sc">$</span>rand_unif, <span class="dv">1</span><span class="dt">L</span>, <span class="dv">1000</span><span class="dt">L</span>),</span>
+<span id="cb16-4"><a href="#cb16-4" tabindex="-1"></a>    <span class="at">callme =</span> <span class="fu">run_rand</span>(cm_mod<span class="sc">$</span>rand_unif, <span class="dv">1</span><span class="dt">L</span>, <span class="dv">1000</span><span class="dt">L</span>),</span>
+<span id="cb16-5"><a href="#cb16-5" tabindex="-1"></a>    <span class="at">iterations =</span> <span class="dv">20</span>,</span>
+<span id="cb16-6"><a href="#cb16-6" tabindex="-1"></a>    <span class="at">check =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb16-7"><a href="#cb16-7" tabindex="-1"></a>    <span class="at">memory =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb16-8"><a href="#cb16-8" tabindex="-1"></a>    <span class="at">filter_gc =</span> <span class="cn">FALSE</span></span>
+<span id="cb16-9"><a href="#cb16-9" tabindex="-1"></a>  )</span>
+<span id="cb16-10"><a href="#cb16-10" tabindex="-1"></a></span>
+<span id="cb16-11"><a href="#cb16-11" tabindex="-1"></a>  rand_bench_n4096 <span class="ot">&lt;-</span> bench<span class="sc">::</span><span class="fu">mark</span>(</span>
+<span id="cb16-12"><a href="#cb16-12" tabindex="-1"></a>    <span class="at">Rtinycc =</span> <span class="fu">run_rand</span>(rt_mod<span class="sc">$</span>rand_unif, <span class="dv">4096</span><span class="dt">L</span>, <span class="dv">100</span><span class="dt">L</span>),</span>
+<span id="cb16-13"><a href="#cb16-13" tabindex="-1"></a>    <span class="at">callme =</span> <span class="fu">run_rand</span>(cm_mod<span class="sc">$</span>rand_unif, <span class="dv">4096</span><span class="dt">L</span>, <span class="dv">100</span><span class="dt">L</span>),</span>
+<span id="cb16-14"><a href="#cb16-14" tabindex="-1"></a>    <span class="at">iterations =</span> <span class="dv">20</span>,</span>
+<span id="cb16-15"><a href="#cb16-15" tabindex="-1"></a>    <span class="at">check =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb16-16"><a href="#cb16-16" tabindex="-1"></a>    <span class="at">memory =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb16-17"><a href="#cb16-17" tabindex="-1"></a>    <span class="at">filter_gc =</span> <span class="cn">FALSE</span></span>
+<span id="cb16-18"><a href="#cb16-18" tabindex="-1"></a>  )</span>
+<span id="cb16-19"><a href="#cb16-19" tabindex="-1"></a></span>
+<span id="cb16-20"><a href="#cb16-20" tabindex="-1"></a>  <span class="fu">list</span>(<span class="at">rand_bench_n1 =</span> rand_bench_n1, <span class="at">rand_bench_n4096 =</span> rand_bench_n4096)</span>
+<span id="cb16-21"><a href="#cb16-21" tabindex="-1"></a>})</span>
+<span id="cb16-22"><a href="#cb16-22" tabindex="-1"></a></span>
+<span id="cb16-23"><a href="#cb16-23" tabindex="-1"></a>rand_results<span class="sc">$</span>rand_bench_n1</span>
+<span id="cb16-24"><a href="#cb16-24" tabindex="-1"></a><span class="co">#&gt; # A tibble: 2 × 6</span></span>
+<span id="cb16-25"><a href="#cb16-25" tabindex="-1"></a><span class="co">#&gt;   expression      min   median `itr/sec` mem_alloc `gc/sec`</span></span>
+<span id="cb16-26"><a href="#cb16-26" tabindex="-1"></a><span class="co">#&gt;   &lt;bch:expr&gt; &lt;bch:tm&gt; &lt;bch:tm&gt;     &lt;dbl&gt; &lt;bch:byt&gt;    &lt;dbl&gt;</span></span>
+<span id="cb16-27"><a href="#cb16-27" tabindex="-1"></a><span class="co">#&gt; 1 Rtinycc       883µs    974µs      800.    15.4KB     40.0</span></span>
+<span id="cb16-28"><a href="#cb16-28" tabindex="-1"></a><span class="co">#&gt; 2 callme        479µs    486µs     2027.        0B      0</span></span>
+<span id="cb16-29"><a href="#cb16-29" tabindex="-1"></a>rand_results<span class="sc">$</span>rand_bench_n4096</span>
+<span id="cb16-30"><a href="#cb16-30" tabindex="-1"></a><span class="co">#&gt; # A tibble: 2 × 6</span></span>
+<span id="cb16-31"><a href="#cb16-31" tabindex="-1"></a><span class="co">#&gt;   expression      min   median `itr/sec` mem_alloc `gc/sec`</span></span>
+<span id="cb16-32"><a href="#cb16-32" tabindex="-1"></a><span class="co">#&gt;   &lt;bch:expr&gt; &lt;bch:tm&gt; &lt;bch:tm&gt;     &lt;dbl&gt; &lt;bch:byt&gt;    &lt;dbl&gt;</span></span>
+<span id="cb16-33"><a href="#cb16-33" tabindex="-1"></a><span class="co">#&gt; 1 Rtinycc      1.68ms   2.42ms      373.    3.13MB     18.7</span></span>
+<span id="cb16-34"><a href="#cb16-34" tabindex="-1"></a><span class="co">#&gt; 2 callme       1.16ms   1.95ms      480.    3.13MB     24.0</span></span></code></pre></div>
+<p>The usual pattern is:</p>
+<ul>
+<li>for <code>fill_rand()</code>, the comparison is much closer to
+<code>Rtinycc</code>’s intended array-oriented usage</li>
+<li>for <code>n = 1</code>, wrapper overhead and return-path mechanics
+dominate</li>
+<li>for larger <code>n</code>, the copy still matters, but more of the
+time is spent in the actual loop and RNG generation</li>
+</ul>
+</div>
+<div id="what-these-numbers-mean" class="section level2">
+<h2>What These Numbers Mean</h2>
+<p>The benchmark gives a reasonable mental model:</p>
+<ul>
+<li><code>Rtinycc</code> is optimized for low compilation latency and
+direct interactive use</li>
+<li>for very small scalar calls, a traditional <code>.Call()</code>
+entry point has lower overhead</li>
+<li>when <code>Rtinycc</code> must copy returned buffers into R vectors,
+that copy is real and measurable</li>
+<li>part of the runtime gap is also expected backend quality:
+<code>callme</code> is using the system compiler, while
+<code>Rtinycc</code> is using TinyCC</li>
+<li>the main way to amortize the boundary cost is to do more work per
+call</li>
+</ul>
+<p>So the package is usually strongest when:</p>
+<ul>
+<li>compile latency matters</li>
+<li>you want to bind plain C signatures quickly</li>
+<li>you batch work into array-oriented or coarse-grained calls</li>
+</ul>
+<p>It is less ideal when:</p>
+<ul>
+<li>every microsecond of scalar-call overhead matters</li>
+<li>you can already afford and manage a regular shared-library
+toolchain</li>
+<li>you need a direct <code>.Call()</code> entry point that writes its
+final result straight into R-managed objects</li>
+</ul>
+</div>
+
+
+
+<!-- code folding -->
+
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>
