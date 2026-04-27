@@ -1,6 +1,6 @@
-7f1b0346210b3e7bbcc2b36f79ad289b *DESCRIPTION
+c5eeea6d37e811d4d4b014f64578fc91 *DESCRIPTION
 cb7f4cf1c0cc0b58d8d0525091878785 *NAMESPACE
-f2b82a8c12089316db4c44ab9320c6b8 *NEWS.md
+480a11c8a828d9fb303fd36f3975faed *NEWS.md
 a02de5678441531cf2ac148f67a0c3d0 *R/aaa.R
 7363cfe49d2cfb3eec9ac76e701346bb *R/aaa_ffi_codegen_matrix.R
 82052170c15b9921576748b0425d5fff *R/aaa_ffi_codegen_rules.R
@@ -17,7 +17,7 @@ bd47e5a5a0be7434b47e9face6018558 *TODO
 88b1a1dbd786cb348e0390ddf32213b7 *build/vignette.rds
 95c990d0f688a7ceeeaf69dfcbda67a7 *cleanup
 d4549edba6ec87b206370effb4c410ea *cleanup.win
-a949569316a02ef6ba49da4d21240757 *configure
+072cac5961a2210b2e873541e35be5f0 *configure
 1f19afe4b00e99a4c3d2b63bab14d1d8 *configure.win
 6321220e9f916392c17f1d0cc604772b *inst/LICENSE.note
 ac0e19814e012e4c730b664efc1de89b *inst/RAPI/API.csv
@@ -32,12 +32,12 @@ d98404d272b186b856753d189089c0a1 *inst/doc/advanced-ffi-types.R
 0345ef50873dfc29d405c08419f03501 *inst/doc/advanced-ffi-types.html
 855abb503cfd73322a45bd83a12b9b47 *inst/doc/compilation-and-call-overhead.R
 202f12bc1d432347a52184d09d1f7cbc *inst/doc/compilation-and-call-overhead.Rmd
-fdf4e3594bf0bb2423b5920494ef95f7 *inst/doc/compilation-and-call-overhead.html
+f28eed58e44ffacff3c7ed39b4178132 *inst/doc/compilation-and-call-overhead.html
 71cd5dfa9e20f38e0ca8357fbb1ac4ca *inst/doc/ffi-boundary-semantics.Rmd
 52250f68b9746d59bd42cda79f690c63 *inst/doc/ffi-boundary-semantics.html
 6d005d4f2b44339ee6894d32e03c4bc5 *inst/doc/ffi-helpers.R
 8f3026a1d1c933e25d00eb941cc29f85 *inst/doc/ffi-helpers.Rmd
-6e0cfbeea6b63610d34d72ee9c0a7614 *inst/doc/ffi-helpers.html
+876daf51e5185f7771b444c6d202da77 *inst/doc/ffi-helpers.html
 82177a291c677479d3ed6acd53dd6a56 *inst/doc/ffi-objects-and-callbacks.R
 9e3a65374a36ab00dbe2f4dccb57ea03 *inst/doc/ffi-objects-and-callbacks.Rmd
 d42592ad6dbc5a8710b2e6bb1e2a732b *inst/doc/ffi-objects-and-callbacks.html
@@ -46,7 +46,7 @@ d42592ad6dbc5a8710b2e6bb1e2a732b *inst/doc/ffi-objects-and-callbacks.html
 24a21cc5f74114bc3a65a15896bb9199 *inst/doc/ffi-types.html
 077f43b5cd795ac44c77b819959bbaa3 *inst/doc/getting-started.R
 5d04ad79997dca1a19657e927d995a89 *inst/doc/getting-started.Rmd
-fd76fc0eb956e4fdec9f00814362cfcd *inst/doc/getting-started.html
+cab22f79891a6cffdc8ef405e653d191 *inst/doc/getting-started.html
 74df1a975af40d069da05b503fee10b7 *inst/doc/internals.R
 96411212e445f5bfd31c50c0745b8d25 *inst/doc/internals.Rmd
 29ce4ef19c654beda3b3d5f40e9db016 *inst/doc/internals.html
