@@ -10,6 +10,7 @@ tcc_ffi <- Rtinycc::tcc_ffi
 tcc_source <- Rtinycc::tcc_source
 has_callme <- requireNamespace("callme", quietly = TRUE)
 has_bench <- requireNamespace("bench", quietly = TRUE)
+has_profmem <- isTRUE(capabilities("profmem"))
 
 ## -----------------------------------------------------------------------------
 build_rtinycc_module <- function() {
@@ -91,10 +92,15 @@ if (!has_callme) {
   }
 }
 
-can_run_benchmarks <- can_run_callme && has_bench
+can_run_benchmarks <- can_run_callme && has_bench && has_profmem
 
 if (is.null(callme_runtime_reason) && !has_bench) {
   callme_runtime_reason <- "`bench` is not installed."
+} else if (is.null(callme_runtime_reason) && !has_profmem) {
+  callme_runtime_reason <- paste(
+    "`bench` runtime comparisons are skipped because memory profiling",
+    "is not available in this R build."
+  )
 } else if (is.null(callme_runtime_reason)) {
   callme_runtime_reason <- "Executable comparisons are enabled."
 }
@@ -182,6 +188,9 @@ has_callme
 has_bench
 
 ## -----------------------------------------------------------------------------
+has_profmem
+
+## -----------------------------------------------------------------------------
 can_run_callme
 
 ## -----------------------------------------------------------------------------
@@ -214,7 +223,7 @@ noop_bench <- with_benchmark_modules(function(rt_mod, cm_mod) {
     callme = run_noop(cm_mod$noop, n_noop),
     iterations = 20,
     check = TRUE,
-    memory = TRUE,
+    memory = has_profmem,
     filter_gc = FALSE
   )
 })
@@ -228,7 +237,7 @@ fill_bench_n4096 <- with_benchmark_modules(function(rt_mod, cm_mod) {
     callme = run_fill(cm_mod$fill_rand, 4096L, 100L),
     iterations = 20,
     check = FALSE,
-    memory = TRUE,
+    memory = has_profmem,
     filter_gc = FALSE
   )
 })
@@ -242,7 +251,7 @@ rand_results <- with_benchmark_modules(function(rt_mod, cm_mod) {
     callme = run_rand(cm_mod$rand_unif, 1L, 1000L),
     iterations = 20,
     check = FALSE,
-    memory = TRUE,
+    memory = has_profmem,
     filter_gc = FALSE
   )
 
@@ -251,7 +260,7 @@ rand_results <- with_benchmark_modules(function(rt_mod, cm_mod) {
     callme = run_rand(cm_mod$rand_unif, 4096L, 100L),
     iterations = 20,
     check = FALSE,
-    memory = TRUE,
+    memory = has_profmem,
     filter_gc = FALSE
   )
 

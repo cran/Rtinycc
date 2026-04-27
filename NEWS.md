@@ -1,3 +1,28 @@
+# Rtinycc 0.1.9
+
+- Replace the upstream `make install` step with explicit copies of the
+  build artifacts (`tcc`, `libtcc.{a,dylib,so}`, `libtcc1.a`, `libtcc.h`,
+  and the bundled tinycc C headers under `lib/tcc/include/`). This sidesteps
+  BSD/GNU `install` differences and the strict `install-unx` macros in the
+  upstream Makefile that cause configuration to fail on macOS arm64 and
+  x86_64 CRAN builders. The installed layout under `inst/tinycc/` is
+  unchanged.
+
+- On Linux, prefer the unversioned `libm.so` GNU ld script over the bare
+  versioned SONAME (`libm.so.6`) when resolving the system math runtime in
+  vignettes and tests. TinyCC handles GNU ld scripts directly, which avoids
+  link failures on Fedora-style toolchains.
+
+- Make the external-library linking example in tests and the
+  "Linking External Libraries" vignette skip cleanly when `tcc_link()` cannot
+  resolve the platform math runtime, instead of erroring the whole run.
+
+- Skip runtime benchmark vignette chunks that depend on memory profiling when
+  the running R was built without `Rprofmem()`, avoiding vignette rebuild
+  failures on platforms built without memory profiling support.
+
+- Add a CRAN version badge to the README.
+
 # Rtinycc 0.1.8
 
 - Clean up vignette sources by removing package-attachment checks and replacing

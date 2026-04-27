@@ -13,9 +13,13 @@ find_system_math_library <- function() {
 
   sysname <- as.character(unname(Sys.info()[["sysname"]]))
   paths <- unique(Rtinycc:::tcc_library_search_paths(sysname))
+  # On Linux prefer the unversioned `libm.so`, which on glibc systems is a
+  # GNU ld script that pulls in libm.so.6 plus libmvec.so.1; TinyCC handles
+  # those scripts. Fall back to the SONAME-versioned file only if the dev
+  # symlink is absent (some minimal containers).
   patterns <- switch(
     sysname,
-    Linux = c("^libm\\.so(\\.[0-9]+)+$"),
+    Linux = c("^libm\\.so$", "^libm\\.so(\\.[0-9]+)+$"),
     Darwin = c("^libSystem\\.B\\.dylib$", "^libm\\.dylib$"),
     character(0)
   )
@@ -39,8 +43,18 @@ find_system_math_library <- function() {
   NULL
 }
 math_lib_path <- find_system_math_library()
+math_link_ok <- !is.null(math_lib_path) && tryCatch(
+  {
+    Rtinycc::tcc_link(
+      math_lib_path,
+      symbols = list(sqrt = list(args = list("f64"), returns = "f64"))
+    )
+    TRUE
+  },
+  error = function(e) FALSE
+)
 
-## ----eval = !is_windows && !is.null(math_lib_path)----------------------------
+## ----eval = !is_windows && math_link_ok---------------------------------------
 math <- tcc_link(
   math_lib_path,
   symbols = list(
@@ -52,7 +66,7 @@ math <- tcc_link(
 math$sqrt(25)
 math$cos(0)
 
-## ----eval = !is_windows && !is.null(math_lib_path)----------------------------
+## ----eval = !is_windows && math_link_ok---------------------------------------
 math_helpers <- tcc_link(
   math_lib_path,
   symbols = list(
