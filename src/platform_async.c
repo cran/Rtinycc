@@ -16,13 +16,13 @@ static cb_result_t cb_result_from_sexp(SEXP s) {
     if (s == R_NilValue) return r;
     if (Rf_isInteger(s) && XLENGTH(s) >= 1) {
         r.kind = CB_RESULT_INT;
-        r.v.i  = INTEGER(s)[0];
+        r.v.i  = Rf_asInteger(s);
     } else if (Rf_isReal(s) && XLENGTH(s) >= 1) {
         r.kind = CB_RESULT_REAL;
-        r.v.d  = REAL(s)[0];
+        r.v.d  = Rf_asReal(s);
     } else if (Rf_isLogical(s) && XLENGTH(s) >= 1) {
         r.kind = CB_RESULT_LOGICAL;
-        r.v.i  = LOGICAL(s)[0];
+        r.v.i  = Rf_asLogical(s);
     } else if (TYPEOF(s) == EXTPTRSXP) {
         r.kind = CB_RESULT_PTR;
         r.v.p  = R_ExternalPtrAddr(s);
@@ -36,7 +36,9 @@ static cb_result_t cb_result_from_sexp(SEXP s) {
 #include <stdlib.h>
 #include <string.h>
 
-extern SEXP RC_invoke_callback_internal(int id, SEXP args);
+extern SEXP RC_invoke_callback_internal_generation(
+    int id, unsigned int generation, SEXP args
+);
 
 /* Window messages for the message-only callback window. */
 #define WM_CB_FIRE (WM_USER + 1)  /* PostMessage: fire-and-forget  */
@@ -44,13 +46,16 @@ extern SEXP RC_invoke_callback_internal(int id, SEXP args);
 
 static HWND cbq_hwnd = NULL;
 static int  cbq_initialized = 0;
+static DWORD cbq_main_thread_id = 0;
 
 typedef struct cb_task {
-    int        id;
-    int        n_args;
-    cb_arg_t  *args;
+    int          id;
+    unsigned int generation;
+    int          n_args;
+    cb_arg_t    *args;
     struct cb_task *next;  /* used only for R-side drain ordering (unused here) */
     cb_result_t result;   /* filled by WndProc before SendMessage returns */
+    int invoke_failed;    /* main-thread callback escaped via non-local jump */
 } cb_task_t;
 
 /**
@@ -108,14 +113,16 @@ static void cbq_free_task(cb_task_t *task) {
 }
 
 /**
- * Allocate and populate a task from id/n_args/args.
+ * Allocate and populate a task from id/generation/n_args/args.
  * Returns NULL on allocation failure.
  */
-static cb_task_t *cbq_make_task(int id, int n_args, const cb_arg_t *args) {
+static cb_task_t *cbq_make_task(int id, unsigned int generation,
+                                int n_args, const cb_arg_t *args) {
     cb_task_t *task = (cb_task_t *)calloc(1, sizeof(cb_task_t));
     if (!task) return NULL;
-    task->id     = id;
-    task->n_args = n_args;
+    task->id         = id;
+    task->generation = generation;
+    task->n_args     = n_args;
 
     if (n_args > 0) {
         task->args = (cb_arg_t *)calloc((size_t)n_args, sizeof(cb_arg_t));
@@ -140,12 +147,20 @@ static cb_task_t *cbq_make_task(int id, int n_args, const cb_arg_t *args) {
  * Allocation: R allocations during callback invocation.
  * Protection: none.
  */
-static void cbq_execute_task(cb_task_t *task) {
-    int  id   = task->id;
+static void cbq_execute_task_body(void *data) {
+    cb_task_t *task = (cb_task_t *)data;
     SEXP args = PROTECT(cb_task_to_args(task));
-    SEXP res  = RC_invoke_callback_internal(id, args);
-    UNPROTECT(1);
+    SEXP res = PROTECT(RC_invoke_callback_internal_generation(
+        task->id, task->generation, args
+    ));
+
     task->result = cb_result_from_sexp(res);
+    UNPROTECT(2);
+}
+
+static void cbq_execute_task(cb_task_t *task) {
+    memset(&task->result, 0, sizeof(task->result));
+    task->invoke_failed = !R_ToplevelExec(cbq_execute_task_body, task);
 }
 
 /**
@@ -192,6 +207,11 @@ int RC_platform_async_is_initialized(void) {
     return cbq_initialized;
 }
 
+int RC_platform_async_is_main_thread(void) {
+    return cbq_initialized && cbq_main_thread_id != 0 &&
+        GetCurrentThreadId() == cbq_main_thread_id;
+}
+
 /**
  * Initialize async callback subsystem.
  * Creates the message-only window on the main thread.
@@ -215,6 +235,7 @@ int RC_platform_async_init(void) {
     if (!cbq_hwnd) {
         Rf_error("Failed to create async callback window");
     }
+    cbq_main_thread_id = GetCurrentThreadId();
     cbq_initialized = 1;
     return 0;
 }
@@ -223,10 +244,11 @@ int RC_platform_async_init(void) {
  * Schedule a fire-and-forget async callback (void return).
  * Uses PostMessage — non-blocking; auto-drains via R's message pump.
  */
-int RC_platform_async_schedule(int id, int n_args, const cb_arg_t *args) {
+int RC_platform_async_schedule(int id, unsigned int generation,
+                               int n_args, const cb_arg_t *args) {
     if (!cbq_initialized) return -1;
 
-    cb_task_t *task = cbq_make_task(id, n_args, args);
+    cb_task_t *task = cbq_make_task(id, generation, n_args, args);
     if (!task) return -3;
 
     if (!PostMessage(cbq_hwnd, WM_CB_FIRE, 0, (LPARAM)task)) {
@@ -241,19 +263,21 @@ int RC_platform_async_schedule(int id, int n_args, const cb_arg_t *args) {
  * Uses SendMessage — blocks the calling (worker) thread until the main
  * thread's WndProc executes the R callback and returns.
  */
-int RC_platform_async_schedule_sync(int id, int n_args, const cb_arg_t *args,
+int RC_platform_async_schedule_sync(int id, unsigned int generation,
+                                    int n_args, const cb_arg_t *args,
                                     cb_result_t *result) {
     if (!cbq_initialized) return -1;
 
-    cb_task_t *task = cbq_make_task(id, n_args, args);
+    cb_task_t *task = cbq_make_task(id, generation, n_args, args);
     if (!task) return -3;
 
     /* SendMessage blocks until WndProc returns on the main thread. */
     SendMessage(cbq_hwnd, WM_CB_SYNC, 0, (LPARAM)task);
 
+    int rc = task->invoke_failed ? -5 : 0;
     if (result) *result = task->result;
     cbq_free_task(task);
-    return 0;
+    return rc;
 }
 
 /**
@@ -261,7 +285,7 @@ int RC_platform_async_schedule_sync(int id, int n_args, const cb_arg_t *args,
  * Used by tcc_callback_async_drain() for testing.
  */
 void RC_platform_async_drain(void) {
-    if (!cbq_initialized) return;
+    if (!cbq_initialized || !RC_platform_async_is_main_thread()) return;
     MSG msg;
     while (PeekMessage(&msg, cbq_hwnd, WM_CB_FIRE, WM_CB_FIRE, PM_REMOVE)) {
         DispatchMessage(&msg);
@@ -270,19 +294,50 @@ void RC_platform_async_drain(void) {
 
 /**
  * Drain pending callbacks in a polling loop until *done_flag != 0.
- * Uses MsgWaitForMultipleObjects to wake instantly on PostMessage with
- * zero CPU waste while idle.  100 ms timeout for R_CheckUserInterrupt.
- * Must be called from the main R thread only.
+ * Uses MsgWaitForMultipleObjects to wake instantly on callback messages with
+ * zero CPU waste while idle. Interrupts are noticed during the wait but
+ * reported only after done_flag is set. Must run on the main R thread.
  */
-void RC_platform_async_drain_loop(volatile int *done_flag) {
-    if (!done_flag || !cbq_initialized) return;
-    while (!*done_flag) {
+static int cbq_done_load(volatile int *done_flag) {
+    return (int)InterlockedCompareExchange(
+        (volatile LONG *)done_flag, 0, 0
+    );
+}
+
+static void cbq_done_store(volatile int *done_flag, int value) {
+    (void)InterlockedExchange((volatile LONG *)done_flag, (LONG)value);
+}
+
+static void cbq_check_interrupt(void *unused) {
+    (void)unused;
+    R_CheckUserInterrupt();
+}
+
+static int cbq_wait_until_done(volatile int *done_flag) {
+    int interrupted = 0;
+
+    while (!cbq_done_load(done_flag)) {
         RC_platform_async_drain();
-        if (*done_flag) break;
-        MsgWaitForMultipleObjects(0, NULL, FALSE, 100, QS_POSTMESSAGE);
-        R_CheckUserInterrupt();
+        if (cbq_done_load(done_flag)) break;
+        MsgWaitForMultipleObjects(
+            0, NULL, FALSE, 100, QS_POSTMESSAGE | QS_SENDMESSAGE
+        );
+        if (!interrupted && !R_ToplevelExec(cbq_check_interrupt, NULL)) {
+            interrupted = 1;
+        }
     }
     RC_platform_async_drain();
+    return interrupted;
+}
+
+void RC_platform_async_drain_loop(volatile int *done_flag) {
+    int interrupted;
+
+    if (!done_flag || !cbq_initialized || !RC_platform_async_is_main_thread()) return;
+    interrupted = cbq_wait_until_done(done_flag);
+    if (interrupted) {
+        Rf_error("async callback execution interrupted");
+    }
 }
 
 /* Thread trampoline for RC_platform_async_exec. */
@@ -290,18 +345,26 @@ struct exec_ctx { void (*func)(void *); void *arg; volatile int done; };
 static DWORD WINAPI exec_thread_fn(LPVOID p) {
     struct exec_ctx *c = (struct exec_ctx *)p;
     c->func(c->arg);
-    c->done = 1;
+    cbq_done_store(&c->done, 1);
     return 0;
 }
 
 void RC_platform_async_exec(void (*func)(void *), void *arg) {
-    if (!cbq_initialized) RC_platform_async_init();
+    int interrupted;
     struct exec_ctx ctx = { func, arg, 0 };
-    HANDLE th = CreateThread(NULL, 0, exec_thread_fn, &ctx, 0, NULL);
-    if (!th) { Rf_error("RC_platform_async_exec: CreateThread failed"); return; }
-    RC_platform_async_drain_loop(&ctx.done);
+    HANDLE th;
+
+    if (!cbq_initialized) RC_platform_async_init();
+    th = CreateThread(NULL, 0, exec_thread_fn, &ctx, 0, NULL);
+    if (!th) {
+        Rf_error("RC_platform_async_exec: CreateThread failed");
+    }
+    interrupted = cbq_wait_until_done(&ctx.done);
     WaitForSingleObject(th, INFINITE);
     CloseHandle(th);
+    if (interrupted) {
+        Rf_error("async callback execution interrupted");
+    }
 }
 
 #else  /* POSIX */
@@ -315,12 +378,15 @@ void RC_platform_async_exec(void (*func)(void *), void *arg) {
 #include <string.h>
 #include <stdlib.h>
 
-extern SEXP RC_invoke_callback_internal(int id, SEXP args);
+extern SEXP RC_invoke_callback_internal_generation(
+    int id, unsigned int generation, SEXP args
+);
 
 typedef struct cb_task {
-    int        id;
-    int        n_args;
-    cb_arg_t  *args;
+    int          id;
+    unsigned int generation;
+    int          n_args;
+    cb_arg_t    *args;
     struct cb_task *next;
     /* Sync-path fields (zeroed by calloc for async tasks). */
     int          is_sync;
@@ -328,6 +394,7 @@ typedef struct cb_task {
     pthread_mutex_t sync_mtx;
     pthread_cond_t  sync_cond;
     int          result_ready;
+    int          invoke_failed;
 } cb_task_t;
 
 static cb_task_t      *cbq_head = NULL;
@@ -336,6 +403,8 @@ static pthread_mutex_t cbq_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int             cbq_pipe[2] = {-1, -1};
 static InputHandler   *cbq_ih  = NULL;
 static int             cbq_initialized = 0;
+static pthread_t       cbq_main_thread;
+static int             cbq_main_thread_set = 0;
 
 /**
  * Return 1 on Unix-like platforms.
@@ -349,6 +418,11 @@ int RC_platform_async_is_supported(void) {
  */
 int RC_platform_async_is_initialized(void) {
     return cbq_initialized;
+}
+
+int RC_platform_async_is_main_thread(void) {
+    return cbq_initialized && cbq_main_thread_set &&
+        pthread_equal(pthread_self(), cbq_main_thread) != 0;
 }
 
 /**
@@ -427,6 +501,22 @@ static void cbq_free_task(cb_task_t *task) {
     free(task);
 }
 
+static void cbq_execute_task_body(void *data) {
+    cb_task_t *task = (cb_task_t *)data;
+    SEXP args = PROTECT(cb_task_to_args(task));
+    SEXP res = PROTECT(RC_invoke_callback_internal_generation(
+        task->id, task->generation, args
+    ));
+
+    task->result = cb_result_from_sexp(res);
+    UNPROTECT(2);
+}
+
+static void cbq_execute_task(cb_task_t *task) {
+    memset(&task->result, 0, sizeof(task->result));
+    task->invoke_failed = !R_ToplevelExec(cbq_execute_task_body, task);
+}
+
 /**
  * Drain and execute all queued tasks on the main thread.
  * For sync tasks: fills result and signals the waiting worker; does NOT free
@@ -436,13 +526,9 @@ static void cbq_drain_tasks(void) {
     cb_task_t *task = cbq_pop_all();
     while (task) {
         cb_task_t *next = task->next;  /* capture before any signal */
-        int  id   = task->id;
-        SEXP args = PROTECT(cb_task_to_args(task));
-        SEXP res  = RC_invoke_callback_internal(id, args);
-        UNPROTECT(1);
+        cbq_execute_task(task);
 
         if (task->is_sync) {
-            task->result = cb_result_from_sexp(res);
             pthread_mutex_lock(&task->sync_mtx);
             task->result_ready = 1;
             pthread_cond_signal(&task->sync_cond);
@@ -478,12 +564,18 @@ int RC_platform_async_init(void) {
     }
     int flags = fcntl(cbq_pipe[0], F_GETFL, 0);
     if (flags < 0 || fcntl(cbq_pipe[0], F_SETFL, flags | O_NONBLOCK) < 0) {
-        Rf_error("Failed to set async pipe non-blocking: %s", strerror(errno));
+        Rf_error("Failed to set async pipe read non-blocking: %s", strerror(errno));
+    }
+    int flags_w = fcntl(cbq_pipe[1], F_GETFL, 0);
+    if (flags_w < 0 || fcntl(cbq_pipe[1], F_SETFL, flags_w | O_NONBLOCK) < 0) {
+        Rf_error("Failed to set async pipe write non-blocking: %s", strerror(errno));
     }
     cbq_ih = addInputHandler(R_InputHandlers, cbq_pipe[0], cbq_input_handler, 10);
     if (!cbq_ih) {
         Rf_error("Failed to register input handler");
     }
+    cbq_main_thread = pthread_self();
+    cbq_main_thread_set = 1;
     cbq_initialized = 1;
     return 0;
 }
@@ -492,11 +584,13 @@ int RC_platform_async_init(void) {
  * Allocate and populate a task.
  * Returns NULL on allocation failure.
  */
-static cb_task_t *cbq_make_task(int id, int n_args, const cb_arg_t *args) {
+static cb_task_t *cbq_make_task(int id, unsigned int generation,
+                                int n_args, const cb_arg_t *args) {
     cb_task_t *task = (cb_task_t *)calloc(1, sizeof(cb_task_t));
     if (!task) return NULL;
-    task->id     = id;
-    task->n_args = n_args;
+    task->id         = id;
+    task->generation = generation;
+    task->n_args     = n_args;
 
     if (n_args > 0) {
         task->args = (cb_arg_t *)calloc((size_t)n_args, sizeof(cb_arg_t));
@@ -518,10 +612,11 @@ static cb_task_t *cbq_make_task(int id, int n_args, const cb_arg_t *args) {
  * Schedule a fire-and-forget async callback (void return).
  * Pushes task and writes to pipe; auto-drains via R's input handler.
  */
-int RC_platform_async_schedule(int id, int n_args, const cb_arg_t *args) {
+int RC_platform_async_schedule(int id, unsigned int generation,
+                               int n_args, const cb_arg_t *args) {
     if (!cbq_initialized) return -1;
 
-    cb_task_t *task = cbq_make_task(id, n_args, args);
+    cb_task_t *task = cbq_make_task(id, generation, n_args, args);
     if (!task) return -3;
 
     cbq_push(task);
@@ -537,11 +632,12 @@ int RC_platform_async_schedule(int id, int n_args, const cb_arg_t *args) {
  * Pushes task, writes to pipe, then blocks on pthread_cond until the main
  * thread's input handler executes the callback and signals completion.
  */
-int RC_platform_async_schedule_sync(int id, int n_args, const cb_arg_t *args,
+int RC_platform_async_schedule_sync(int id, unsigned int generation,
+                                    int n_args, const cb_arg_t *args,
                                     cb_result_t *result) {
     if (!cbq_initialized) return -1;
 
-    cb_task_t *task = cbq_make_task(id, n_args, args);
+    cb_task_t *task = cbq_make_task(id, generation, n_args, args);
     if (!task) return -3;
 
     task->is_sync     = 1;
@@ -561,12 +657,13 @@ int RC_platform_async_schedule_sync(int id, int n_args, const cb_arg_t *args,
     }
     pthread_mutex_unlock(&task->sync_mtx);
 
+    int rc = task->invoke_failed ? -5 : 0;
     if (result) *result = task->result;
 
     pthread_mutex_destroy(&task->sync_mtx);
     pthread_cond_destroy(&task->sync_cond);
     cbq_free_task(task);
-    return 0;
+    return rc;
 }
 
 /**
@@ -574,36 +671,72 @@ int RC_platform_async_schedule_sync(int id, int n_args, const cb_arg_t *args,
  * Used by tcc_callback_async_drain() for testing / manual flush.
  */
 void RC_platform_async_drain(void) {
+    if (!RC_platform_async_is_main_thread()) return;
     cbq_drain_tasks();
 }
 
 /**
  * Drain pending callbacks in a polling loop until *done_flag != 0.
  * Uses select() on the callback pipe for instant wakeup when a worker
- * enqueues a callback — zero latency, zero CPU waste while idle.
- * 100 ms select timeout for periodic R_CheckUserInterrupt (Ctrl+C).
+ * enqueues a callback — zero latency, zero CPU waste while idle. Interrupts
+ * are noticed during the wait but reported only after done_flag is set.
  * Must be called from the main R thread only.
  */
-void RC_platform_async_drain_loop(volatile int *done_flag) {
-    if (!done_flag || !cbq_initialized) return;
-    while (!*done_flag) {
-        /* Drain pipe bytes and execute pending tasks. */
+static int cbq_done_load(volatile int *done_flag) {
+#if defined(__GNUC__) || defined(__clang__)
+    return __atomic_load_n(done_flag, __ATOMIC_ACQUIRE);
+#else
+    return *done_flag;
+#endif
+}
+
+static void cbq_done_store(volatile int *done_flag, int value) {
+#if defined(__GNUC__) || defined(__clang__)
+    __atomic_store_n(done_flag, value, __ATOMIC_RELEASE);
+#else
+    *done_flag = value;
+#endif
+}
+
+static void cbq_check_interrupt(void *unused) {
+    (void)unused;
+    R_CheckUserInterrupt();
+}
+
+static int cbq_wait_until_done(volatile int *done_flag) {
+    int interrupted = 0;
+
+    while (!cbq_done_load(done_flag)) {
         char buf[32];
+
         while (read(cbq_pipe[0], buf, sizeof(buf)) > 0) {}
         cbq_drain_tasks();
-        if (*done_flag) break;
-        /* Block until the pipe has data or 100 ms timeout. */
+        if (cbq_done_load(done_flag)) break;
+
         fd_set rfds;
         FD_ZERO(&rfds);
         FD_SET(cbq_pipe[0], &rfds);
         struct timeval tv = { .tv_sec = 0, .tv_usec = 100000 };
-        select(cbq_pipe[0] + 1, &rfds, NULL, NULL, &tv);
-        R_CheckUserInterrupt();
+        (void)select(cbq_pipe[0] + 1, &rfds, NULL, NULL, &tv);
+        if (!interrupted && !R_ToplevelExec(cbq_check_interrupt, NULL)) {
+            interrupted = 1;
+        }
     }
-    /* Final drain to flush any stragglers. */
+
     char buf[32];
     while (read(cbq_pipe[0], buf, sizeof(buf)) > 0) {}
     cbq_drain_tasks();
+    return interrupted;
+}
+
+void RC_platform_async_drain_loop(volatile int *done_flag) {
+    int interrupted;
+
+    if (!done_flag || !cbq_initialized || !RC_platform_async_is_main_thread()) return;
+    interrupted = cbq_wait_until_done(done_flag);
+    if (interrupted) {
+        Rf_error("async callback execution interrupted");
+    }
 }
 
 /* Thread trampoline for RC_platform_async_exec. */
@@ -611,20 +744,24 @@ struct exec_ctx { void (*func)(void *); void *arg; volatile int done; };
 static void *exec_thread_fn(void *p) {
     struct exec_ctx *c = (struct exec_ctx *)p;
     c->func(c->arg);
-    c->done = 1;
+    cbq_done_store(&c->done, 1);
     return NULL;
 }
 
 void RC_platform_async_exec(void (*func)(void *), void *arg) {
-    if (!cbq_initialized) RC_platform_async_init();
+    int interrupted;
     struct exec_ctx ctx = { .func = func, .arg = arg, .done = 0 };
     pthread_t th;
+
+    if (!cbq_initialized) RC_platform_async_init();
     if (pthread_create(&th, NULL, exec_thread_fn, &ctx) != 0) {
         Rf_error("RC_platform_async_exec: pthread_create failed");
-        return;
     }
-    RC_platform_async_drain_loop(&ctx.done);
+    interrupted = cbq_wait_until_done(&ctx.done);
     pthread_join(th, NULL);
+    if (interrupted) {
+        Rf_error("async callback execution interrupted");
+    }
 }
 
 #endif

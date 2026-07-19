@@ -42,7 +42,7 @@ new_rtinycc_bound_symbol <- function(
   classes <- c("rtinycc_bound_symbol", "rtinycc_symbol_spec")
   if (!is.null(helper_kind)) {
     classes <- c(
-      paste0("rtinycc_helper_symbol_", helper_kind),
+      str_interp("rtinycc_helper_symbol_{helper_kind}"),
       "rtinycc_helper_symbol",
       classes
     )
@@ -211,7 +211,7 @@ as_rtinycc_bound_symbol <- function(sym_name, sym) {
   arg_type_info <- lapply(seq_along(sym$args), function(i) {
     check_ffi_type(
       sym$args[[i]],
-      paste0("symbol '", sym_name, "' argument ", i)
+      str_interp("symbol '{sym_name}' argument {i}")
     )
   })
 
@@ -256,7 +256,7 @@ as_rtinycc_bound_symbol <- function(sym_name, sym) {
     ret_type <- sym$returns$type
     ret_info <- check_ffi_type(
       ret_type,
-      paste0("symbol '", sym_name, "' return")
+      str_interp("symbol '{sym_name}' return")
     )
     if (!is.null(ret_info$kind) && ret_info$kind == "array") {
       if (is.null(sym$returns$length_arg)) {
@@ -310,7 +310,7 @@ as_rtinycc_bound_symbol <- function(sym_name, sym) {
   } else {
     ret_info <- check_ffi_type(
       sym$returns,
-      paste0("symbol '", sym_name, "' return")
+      str_interp("symbol '{sym_name}' return")
     )
     return_spec <- new_rtinycc_symbol_return_spec(
       type = sym$returns,
@@ -334,7 +334,7 @@ as_rtinycc_bound_symbol <- function(sym_name, sym) {
         vtype <- sym$varargs_types[[i]]
         vinfo <- check_ffi_type(
           vtype,
-          paste0("symbol '", sym_name, "' varargs_types ", i)
+          str_interp("symbol '{sym_name}' varargs_types {i}")
         )
         if (!is.null(vinfo$kind) && vinfo$kind != "scalar") {
           stop(
@@ -443,7 +443,7 @@ as_rtinycc_bound_symbol <- function(sym_name, sym) {
         vtype <- sym$varargs[[i]]
         vinfo <- check_ffi_type(
           vtype,
-          paste0("symbol '", sym_name, "' vararg ", i)
+          str_interp("symbol '{sym_name}' vararg {i}")
         )
         if (!is.null(vinfo$kind) && vinfo$kind != "scalar") {
           stop(
@@ -532,15 +532,26 @@ tcc_ffi <- function() {
 
 #' Set output type for FFI compilation
 #'
+#' The high-level FFI creates callable in-memory wrappers, so only `"memory"`
+#' output is supported. Executable and shared-library artifact output requires
+#' the low-level [tcc_state()] and `tcc_output_file()` path and is rejected here
+#' rather than returning dangling callable addresses.
+#'
 #' @param ffi A tcc_ffi object
-#' @param output One of "memory", "dll", "exe"
+#' @param output Must be `"memory"`.
 #' @return Updated tcc_ffi object (for chaining)
 #' @export
-tcc_output <- function(ffi, output = c("memory", "dll", "exe")) {
+tcc_output <- function(ffi, output = "memory") {
   if (!inherits(ffi, "tcc_ffi")) {
     stop("Expected tcc_ffi object", call. = FALSE)
   }
-  output <- match.arg(output)
+  output <- match.arg(output, c("memory", "dll", "exe"))
+  if (!identical(output, "memory")) {
+    stop(
+      "High-level FFI compilation only supports output = 'memory'",
+      call. = FALSE
+    )
+  }
   ffi$output <- output
   ffi
 }
@@ -608,7 +619,7 @@ tcc_options <- function(ffi, options) {
 }
 
 rtinycc_exact_library_name <- function(path) {
-  paste0(":", basename(path))
+  str_interp(":{basename(path)}")
 }
 
 rtinycc_add_library_file <- function(ffi, path) {
@@ -695,9 +706,9 @@ tcc_library <- function(ffi, library) {
 #' - `ptr` globals store the raw address from an external pointer. If the
 #'   external pointer owns memory, keep it alive; otherwise the pointer may
 #'   be freed while the global still points to it.
-#' - `cstring` globals store a borrowed pointer to R's string data
-#'   (UTF-8 translation). Do not free it; for C-owned strings prefer a `ptr`
-#'   global and manage lifetime explicitly (e.g., with `tcc_cstring()`).
+#' - `cstring` globals are rejected because a global would outlive the borrowed
+#'   R string view. Declare the global as `ptr` and manage its storage explicitly
+#'   with an owned object such as [tcc_cstring()].
 #'
 #' @note
 #' Global helpers are generated inside the compiled TCC unit. Recompiling
@@ -733,6 +744,12 @@ tcc_global <- function(ffi, name, type) {
   }
   if (type == "void") {
     stop("Global type cannot be void", call. = FALSE)
+  }
+  if (type == "cstring") {
+    stop(
+      "Global type cannot be cstring; use ptr with explicitly owned storage",
+      call. = FALSE
+    )
   }
 
   if (is.null(ffi$globals)) {
@@ -791,9 +808,10 @@ tcc_source <- function(ffi, code) {
 #'   Callback arguments should use the form \code{callback:<signature>} (e.g.,
 #'   \code{callback:double(double)}). The generated trampoline expects a
 #'   \code{tcc_callback_ptr(cb)} to the corresponding user-data parameter in
-#'   the C API. For thread-safe scheduling, use
-#'   \code{callback_async:<signature>} which enqueues the call on the main
-#'   thread and returns a default value immediately.
+#'   the C API. For worker-thread scheduling, use
+#'   \code{callback_async:<signature>}. Void callbacks are queued
+#'   fire-and-forget; non-void callbacks block the worker until the main thread
+#'   returns a result.
 #' @return Updated tcc_ffi object (for chaining)
 #' @export
 #' @examples
@@ -832,6 +850,12 @@ tcc_bind <- function(ffi, ...) {
 tcc_compile <- function(ffi, verbose = FALSE) {
   if (!inherits(ffi, "tcc_ffi")) {
     stop("Expected tcc_ffi object", call. = FALSE)
+  }
+  if (!identical(ffi$output, "memory")) {
+    stop(
+      "tcc_compile() only creates callable in-memory bindings; use output = 'memory'",
+      call. = FALSE
+    )
   }
 
   if (
@@ -1071,14 +1095,14 @@ tcc_compiled_object <- function(
       # new, free
       helper_names <- c(
         helper_names,
-        paste0("struct_", struct_name, "_new"),
-        paste0("struct_", struct_name, "_free")
+        str_interp("struct_{struct_name}_new"),
+        str_interp("struct_{struct_name}_free")
       )
-      helper_specs[[paste0("struct_", struct_name, "_new")]] <- list(
+      helper_specs[[str_interp("struct_{struct_name}_new")]] <- list(
         args = list(),
         returns = "sexp"
       )
-      helper_specs[[paste0("struct_", struct_name, "_free")]] <- list(
+      helper_specs[[str_interp("struct_{struct_name}_free")]] <- list(
         args = list("sexp"),
         returns = "sexp"
       )
@@ -1089,14 +1113,9 @@ tcc_compiled_object <- function(
 
         helper_names <- c(
           helper_names,
-          paste0("struct_", struct_name, "_get_", field_name)
+          str_interp("struct_{struct_name}_get_{field_name}")
         )
-        helper_specs[[paste0(
-          "struct_",
-          struct_name,
-          "_get_",
-          field_name
-        )]] <- c(
+        helper_specs[[str_interp("struct_{struct_name}_get_{field_name}")]] <- c(
           list(
             args = list("sexp"),
             returns = "sexp"
@@ -1113,40 +1132,23 @@ tcc_compiled_object <- function(
         if (is_array) {
           helper_names <- c(
             helper_names,
-            paste0("struct_", struct_name, "_get_", field_name, "_elt"),
-            paste0("struct_", struct_name, "_set_", field_name, "_elt")
+            str_interp("struct_{struct_name}_get_{field_name}_elt"),
+            str_interp("struct_{struct_name}_set_{field_name}_elt")
           )
-          helper_specs[[paste0(
-            "struct_",
-            struct_name,
-            "_get_",
-            field_name,
-            "_elt"
-          )]] <- list(
+          helper_specs[[str_interp("struct_{struct_name}_get_{field_name}_elt")]] <- list(
             args = list("sexp", "i32"),
             returns = "sexp"
           )
-          helper_specs[[paste0(
-            "struct_",
-            struct_name,
-            "_set_",
-            field_name,
-            "_elt"
-          )]] <- list(
+          helper_specs[[str_interp("struct_{struct_name}_set_{field_name}_elt")]] <- list(
             args = list("sexp", "i32", "sexp"),
             returns = "sexp"
           )
         } else {
           helper_names <- c(
             helper_names,
-            paste0("struct_", struct_name, "_set_", field_name)
+            str_interp("struct_{struct_name}_set_{field_name}")
           )
-          helper_specs[[paste0(
-            "struct_",
-            struct_name,
-            "_set_",
-            field_name
-          )]] <- c(
+          helper_specs[[str_interp("struct_{struct_name}_set_{field_name}")]] <- c(
             list(
               args = list("sexp", "sexp"),
               returns = "sexp"
@@ -1166,14 +1168,9 @@ tcc_compiled_object <- function(
         for (member_name in container_of[[struct_name]]) {
           helper_names <- c(
             helper_names,
-            paste0("struct_", struct_name, "_from_", member_name)
+            str_interp("struct_{struct_name}_from_{member_name}")
           )
-          helper_specs[[paste0(
-            "struct_",
-            struct_name,
-            "_from_",
-            member_name
-          )]] <- list(
+          helper_specs[[str_interp("struct_{struct_name}_from_{member_name}")]] <- list(
             args = list("sexp"),
             returns = "sexp"
           )
@@ -1184,15 +1181,9 @@ tcc_compiled_object <- function(
         for (field_name in field_addr[[struct_name]]) {
           helper_names <- c(
             helper_names,
-            paste0("struct_", struct_name, "_", field_name, "_addr")
+            str_interp("struct_{struct_name}_{field_name}_addr")
           )
-          helper_specs[[paste0(
-            "struct_",
-            struct_name,
-            "_",
-            field_name,
-            "_addr"
-          )]] <- list(
+          helper_specs[[str_interp("struct_{struct_name}_{field_name}_addr")]] <- list(
             args = list("sexp"),
             returns = "sexp"
           )
@@ -1202,14 +1193,14 @@ tcc_compiled_object <- function(
       if (!is.null(struct_raw_access) && struct_name %in% struct_raw_access) {
         helper_names <- c(
           helper_names,
-          paste0("struct_", struct_name, "_get_raw"),
-          paste0("struct_", struct_name, "_set_raw")
+          str_interp("struct_{struct_name}_get_raw"),
+          str_interp("struct_{struct_name}_set_raw")
         )
-        helper_specs[[paste0("struct_", struct_name, "_get_raw")]] <- list(
+        helper_specs[[str_interp("struct_{struct_name}_get_raw")]] <- list(
           args = list("sexp", "i32"),
           returns = "sexp"
         )
-        helper_specs[[paste0("struct_", struct_name, "_set_raw")]] <- list(
+        helper_specs[[str_interp("struct_{struct_name}_set_raw")]] <- list(
           args = list("sexp", "raw"),
           returns = "sexp"
         )
@@ -1218,14 +1209,14 @@ tcc_compiled_object <- function(
       if (!is.null(introspect) && introspect) {
         helper_names <- c(
           helper_names,
-          paste0("struct_", struct_name, "_sizeof"),
-          paste0("struct_", struct_name, "_alignof")
+          str_interp("struct_{struct_name}_sizeof"),
+          str_interp("struct_{struct_name}_alignof")
         )
-        helper_specs[[paste0("struct_", struct_name, "_sizeof")]] <- list(
+        helper_specs[[str_interp("struct_{struct_name}_sizeof")]] <- list(
           args = list(),
           returns = "sexp"
         )
-        helper_specs[[paste0("struct_", struct_name, "_alignof")]] <- list(
+        helper_specs[[str_interp("struct_{struct_name}_alignof")]] <- list(
           args = list(),
           returns = "sexp"
         )
@@ -1240,14 +1231,14 @@ tcc_compiled_object <- function(
       # new, free
       helper_names <- c(
         helper_names,
-        paste0("union_", union_name, "_new"),
-        paste0("union_", union_name, "_free")
+        str_interp("union_{union_name}_new"),
+        str_interp("union_{union_name}_free")
       )
-      helper_specs[[paste0("union_", union_name, "_new")]] <- list(
+      helper_specs[[str_interp("union_{union_name}_new")]] <- list(
         args = list(),
         returns = "sexp"
       )
-      helper_specs[[paste0("union_", union_name, "_free")]] <- list(
+      helper_specs[[str_interp("union_{union_name}_free")]] <- list(
         args = list("sexp"),
         returns = "sexp"
       )
@@ -1259,9 +1250,9 @@ tcc_compiled_object <- function(
 
         helper_names <- c(
           helper_names,
-          paste0("union_", union_name, "_get_", mem_name)
+          str_interp("union_{union_name}_get_{mem_name}")
         )
-        helper_specs[[paste0("union_", union_name, "_get_", mem_name)]] <- c(
+        helper_specs[[str_interp("union_{union_name}_get_{mem_name}")]] <- c(
           list(
             args = list("sexp"),
             returns = "sexp"
@@ -1276,14 +1267,9 @@ tcc_compiled_object <- function(
         if (!is_nested_struct) {
           helper_names <- c(
             helper_names,
-            paste0("union_", union_name, "_set_", mem_name)
+            str_interp("union_{union_name}_set_{mem_name}")
           )
-          helper_specs[[paste0(
-            "union_",
-            union_name,
-            "_set_",
-            mem_name
-          )]] <- list(
+          helper_specs[[str_interp("union_{union_name}_set_{mem_name}")]] <- list(
             args = list("sexp", "sexp"),
             returns = "sexp"
           )
@@ -1293,14 +1279,14 @@ tcc_compiled_object <- function(
       if (!is.null(introspect) && introspect) {
         helper_names <- c(
           helper_names,
-          paste0("union_", union_name, "_sizeof"),
-          paste0("union_", union_name, "_alignof")
+          str_interp("union_{union_name}_sizeof"),
+          str_interp("union_{union_name}_alignof")
         )
-        helper_specs[[paste0("union_", union_name, "_sizeof")]] <- list(
+        helper_specs[[str_interp("union_{union_name}_sizeof")]] <- list(
           args = list(),
           returns = "sexp"
         )
-        helper_specs[[paste0("union_", union_name, "_alignof")]] <- list(
+        helper_specs[[str_interp("union_{union_name}_alignof")]] <- list(
           args = list(),
           returns = "sexp"
         )
@@ -1314,8 +1300,8 @@ tcc_compiled_object <- function(
       enum_def <- enums[[enum_name]]
       # introspection
       if (!is.null(introspect) && introspect) {
-        helper_names <- c(helper_names, paste0("enum_", enum_name, "_sizeof"))
-        helper_specs[[paste0("enum_", enum_name, "_sizeof")]] <- list(
+        helper_names <- c(helper_names, str_interp("enum_{enum_name}_sizeof"))
+        helper_specs[[str_interp("enum_{enum_name}_sizeof")]] <- list(
           args = list(),
           returns = "sexp"
         )
@@ -1325,9 +1311,9 @@ tcc_compiled_object <- function(
         for (const_name in enum_def$constants) {
           helper_names <- c(
             helper_names,
-            paste0("enum_", enum_name, "_", const_name)
+            str_interp("enum_{enum_name}_{const_name}")
           )
-          helper_specs[[paste0("enum_", enum_name, "_", const_name)]] <- list(
+          helper_specs[[str_interp("enum_{enum_name}_{const_name}")]] <- list(
             args = list(),
             returns = "sexp",
             .helper_operation = "constant"
@@ -1342,14 +1328,14 @@ tcc_compiled_object <- function(
     for (global_name in names(globals)) {
       helper_names <- c(
         helper_names,
-        paste0("global_", global_name, "_get"),
-        paste0("global_", global_name, "_set")
+        str_interp("global_{global_name}_get"),
+        str_interp("global_{global_name}_set")
       )
-      helper_specs[[paste0("global_", global_name, "_get")]] <- list(
+      helper_specs[[str_interp("global_{global_name}_get")]] <- list(
         args = list(),
         returns = "sexp"
       )
-      helper_specs[[paste0("global_", global_name, "_set")]] <- list(
+      helper_specs[[str_interp("global_{global_name}_set")]] <- list(
         args = list("sexp"),
         returns = "sexp"
       )
@@ -1439,7 +1425,7 @@ tcc_compiled_object <- function(
           )
           for (this_types in type_sequences) {
             wrapper_name <- variadic_wrapper_name_types(
-              paste0("R_wrap_", sym_name),
+              str_interp("R_wrap_{sym_name}"),
               this_types
             )
             key <- variadic_signature_key(this_types)
@@ -1449,13 +1435,7 @@ tcc_compiled_object <- function(
                 fn_ptr <- tcc_get_symbol(state, wrapper_name)
                 if (!tcc_symbol_is_valid(fn_ptr)) {
                   add_bind_failure(
-                    paste0(
-                      "Symbol '",
-                      sym_name,
-                      "' returned invalid pointer for '",
-                      wrapper_name,
-                      "'"
-                    )
+                    str_interp("Symbol \'{sym_name}\' returned invalid pointer for \'{wrapper_name}\'")
                   )
                   next
                 }
@@ -1463,14 +1443,7 @@ tcc_compiled_object <- function(
               },
               error = function(e) {
                 add_bind_failure(
-                  paste0(
-                    "Could not bind symbol '",
-                    sym_name,
-                    "' wrapper '",
-                    wrapper_name,
-                    "': ",
-                    conditionMessage(e)
-                  )
+                  str_interp("Could not bind symbol \'{sym_name}\' wrapper \'{wrapper_name}\': {conditionMessage(e)}")
                 )
               }
             )
@@ -1482,7 +1455,7 @@ tcc_compiled_object <- function(
 
         for (n_varargs in seq.int(min_varargs, max_varargs)) {
           wrapper_name <- variadic_wrapper_name(
-            paste0("R_wrap_", sym_name),
+            str_interp("R_wrap_{sym_name}"),
             n_varargs
           )
 
@@ -1491,13 +1464,7 @@ tcc_compiled_object <- function(
               fn_ptr <- tcc_get_symbol(state, wrapper_name)
               if (!tcc_symbol_is_valid(fn_ptr)) {
                 add_bind_failure(
-                  paste0(
-                    "Symbol '",
-                    sym_name,
-                    "' returned invalid pointer for '",
-                    wrapper_name,
-                    "'"
-                  )
+                  str_interp("Symbol \'{sym_name}\' returned invalid pointer for \'{wrapper_name}\'")
                 )
                 next
               }
@@ -1505,14 +1472,7 @@ tcc_compiled_object <- function(
             },
             error = function(e) {
               add_bind_failure(
-                paste0(
-                  "Could not bind symbol '",
-                  sym_name,
-                  "' wrapper '",
-                  wrapper_name,
-                  "': ",
-                  conditionMessage(e)
-                )
+                str_interp("Could not bind symbol \'{sym_name}\' wrapper \'{wrapper_name}\': {conditionMessage(e)}")
               )
             }
           )
@@ -1521,11 +1481,7 @@ tcc_compiled_object <- function(
 
       if (length(fn_ptrs) == 0) {
         add_bind_failure(
-          paste0(
-            "Could not bind any variadic wrappers for symbol '",
-            sym_name,
-            "'"
-          )
+          str_interp("Could not bind any variadic wrappers for symbol \'{sym_name}\'")
         )
         next
       }
@@ -1534,7 +1490,7 @@ tcc_compiled_object <- function(
       next
     }
 
-    wrapper_name <- paste0("R_wrap_", sym_name)
+    wrapper_name <- str_interp("R_wrap_{sym_name}")
     tryCatch(
       {
         fn_ptr <- tcc_get_symbol(state, wrapper_name)
@@ -1542,13 +1498,7 @@ tcc_compiled_object <- function(
         # Validate the pointer before creating callable
         if (!tcc_symbol_is_valid(fn_ptr)) {
           add_bind_failure(
-            paste0(
-              "Symbol '",
-              sym_name,
-              "' returned invalid pointer for '",
-              wrapper_name,
-              "'"
-            )
+            str_interp("Symbol \'{sym_name}\' returned invalid pointer for \'{wrapper_name}\'")
           )
           next
         }
@@ -1556,22 +1506,17 @@ tcc_compiled_object <- function(
       },
       error = function(e) {
         add_bind_failure(
-          paste0(
-            "Could not bind symbol '",
-            sym_name,
-            "': ",
-            conditionMessage(e)
-          )
+          str_interp("Could not bind symbol \'{sym_name}\': {conditionMessage(e)}")
         )
       }
     )
   }
 
   for (sym_name in helper_names) {
-    wrapper_name <- paste0("R_wrap_", sym_name)
+    wrapper_name <- str_interp("R_wrap_{sym_name}")
     sym <- helper_specs[[sym_name]]
     if (is.null(sym)) {
-      add_bind_failure(paste0("Unknown helper symbol '", sym_name, "'"))
+      add_bind_failure(str_interp("Unknown helper symbol '{sym_name}'"))
       next
     }
 
@@ -1581,13 +1526,7 @@ tcc_compiled_object <- function(
 
         if (!tcc_symbol_is_valid(fn_ptr)) {
           add_bind_failure(
-            paste0(
-              "Symbol '",
-              sym_name,
-              "' returned invalid pointer for '",
-              wrapper_name,
-              "'"
-            )
+            str_interp("Symbol \'{sym_name}\' returned invalid pointer for \'{wrapper_name}\'")
           )
           next
         }
@@ -1596,12 +1535,7 @@ tcc_compiled_object <- function(
       },
       error = function(e) {
         add_bind_failure(
-          paste0(
-            "Could not bind symbol '",
-            sym_name,
-            "': ",
-            conditionMessage(e)
-          )
+          str_interp("Could not bind symbol \'{sym_name}\': {conditionMessage(e)}")
         )
       }
     )
@@ -1688,7 +1622,7 @@ make_callable <- function(fn_ptr, sym, state) {
   if (!variadic) {
     expected_n <- fixed_n
     dot_syms <- if (expected_n > 0L) {
-      lapply(seq_len(expected_n), function(i) as.name(paste0("..", i)))
+      lapply(seq_len(expected_n), function(i) as.name(str_interp("..{i}")))
     } else {
       list()
     }
@@ -2171,7 +2105,7 @@ tcc_link <- function(
     state = state,
     c_code = c_code,
     libraries = ffi$libraries,
-    target = paste0("FFI bindings for ", basename(path))
+    target = str_interp("FFI bindings for {basename(path)}")
   )
 
   # Create compiled object
@@ -2283,6 +2217,16 @@ read_c_string <- function(ptr) {
 # Struct, Union, Enum Support
 # ============================================================================
 
+validate_composite_size <- function(size, what) {
+  if (
+    !is.numeric(size) || length(size) != 1L || !is.finite(size) ||
+      size < 1 || size > .Machine$integer.max || size != floor(size)
+  ) {
+    stop(what, " must include a positive integer 'size'", call. = FALSE)
+  }
+  invisible(as.integer(size))
+}
+
 #' Declare struct for FFI helper generation
 #'
 #' Generate R-callable helpers for struct allocation, field access,
@@ -2294,6 +2238,9 @@ read_c_string <- function(ptr) {
 #'   names are field names and values are FFI types (e.g., list(x="f64", y="f64")).
 #'   Named nested struct fields can use `"struct:<name>"` to generate borrowed
 #'   nested-view getters and copy-in setters (for example `child = "struct:child"`).
+#'   Fixed character arrays use `list(type = "cstring", size = n)`. Bare
+#'   `cstring` pointer fields are rejected because setters cannot safely retain
+#'   borrowed R string storage; use `ptr` with explicitly owned storage instead.
 #' @return Updated tcc_ffi object
 #' @export
 #' @examples
@@ -2329,25 +2276,43 @@ tcc_struct <- function(ffi, name, accessors) {
     # Handle complex field specs like list(type="cstring", size=20)
     if (is.list(field_type)) {
       type_name <- field_type$type %||% "ptr"
-      if (isTRUE(field_type$array)) {
-        if (is.null(field_type$size) || !is.numeric(field_type$size)) {
-          stop(
-            "Array field '",
-            field_name,
-            "' must include numeric 'size'",
-            call. = FALSE
-          )
-        }
+      size <- field_type$size
+      if (isTRUE(field_type$array) && is.null(size)) {
+        stop(
+          "Array field '",
+          field_name,
+          "' must include a positive integer 'size'",
+          call. = FALSE
+        )
+      }
+      if (!is.null(size)) {
+        validate_composite_size(size, str_interp("Field '{field_name}'"))
+      }
+      if (identical(type_name, "cstring") && isTRUE(field_type$array)) {
+        stop(
+          "Fixed cstring fields use list(type = 'cstring', size = n) without array = TRUE",
+          call. = FALSE
+        )
       }
     } else {
       type_name <- field_type
+    }
+
+    if (
+      identical(type_name, "cstring") &&
+        (!is.list(field_type) || is.null(field_type$size))
+    ) {
+      stop(
+        "Struct cstring pointer fields are unsafe; use ptr with explicitly owned storage",
+        call. = FALSE
+      )
     }
 
     # Allow "struct:name" for nested structs
     if (!grepl("^struct:", type_name)) {
       check_ffi_type(
         type_name,
-        paste0("struct '", name, "' field '", field_name, "'")
+        str_interp("struct '{name}' field '{field_name}'")
       )
     }
   }
@@ -2368,7 +2333,8 @@ tcc_struct <- function(ffi, name, accessors) {
 #'
 #' @param ffi A tcc_ffi object
 #' @param name Union name (as defined in C header)
-#' @param members Named list of union members with FFI types
+#' @param members Named list of union members with FFI types. Bare `cstring`
+#'   pointer members are rejected; use `ptr` with explicitly owned storage.
 #' @param active Default active member for accessors
 #' @return Updated tcc_ffi object
 #' @export
@@ -2394,15 +2360,33 @@ tcc_union <- function(ffi, name, members, active = NULL) {
         # Valid - nested struct
       } else {
         type_name <- mem_type$type %||% "ptr"
+        if (!is.null(mem_type$size)) {
+          validate_composite_size(
+            mem_type$size,
+            str_interp("Union member '{mem_name}'")
+          )
+        }
+        if (identical(type_name, "cstring") && is.null(mem_type$size)) {
+          stop(
+            "Union cstring pointer members are unsafe; use ptr with explicitly owned storage",
+            call. = FALSE
+          )
+        }
         check_ffi_type(
           type_name,
-          paste0("union '", name, "' member '", mem_name, "'")
+          str_interp("union '{name}' member '{mem_name}'")
         )
       }
     } else {
+      if (identical(mem_type, "cstring")) {
+        stop(
+          "Union cstring pointer members are unsafe; use ptr with explicitly owned storage",
+          call. = FALSE
+        )
+      }
       check_ffi_type(
         mem_type,
-        paste0("union '", name, "' member '", mem_name, "'")
+        str_interp("union '{name}' member '{mem_name}'")
       )
     }
   }

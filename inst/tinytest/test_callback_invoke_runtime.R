@@ -215,6 +215,241 @@ expect_true(
 )
 close_if_valid(cb_async)
 
+# Test: direct C scheduling from the main R thread executes immediately.
+# This exercises the main-thread fast path used to avoid queue-and-wait
+# deadlocks when a TCC-side main-thread shim schedules an async callback.
+hits_direct <- 0L
+cb_direct <- tcc_callback(
+  function(x) {
+    hits_direct <<- hits_direct + x
+    NULL
+  },
+  signature = "void (*)(int)"
+)
+cb_ptr_direct <- tcc_callback_ptr(cb_direct)
+
+code_direct_schedule <- "
+#define _Complex
+
+typedef enum { CB_ARG_INT = 0, CB_ARG_REAL = 1, CB_ARG_LOGICAL = 2, CB_ARG_PTR = 3, CB_ARG_CSTRING = 4 } cb_arg_kind_t;
+typedef struct { cb_arg_kind_t kind; union { int i; double d; void* p; char* s; } v; } cb_arg_t;
+typedef struct {
+  int id;
+  int refs;
+  int origin_id;
+  unsigned int generation;
+} callback_token_t;
+int RC_callback_async_schedule_c(int id, unsigned int generation,
+                                 int n_args, const cb_arg_t *args);
+
+int schedule_direct(void* ctx, int value) {
+  callback_token_t* tok = (callback_token_t*)ctx;
+  cb_arg_t args[1];
+  if (!tok || tok->id < 0) return -99;
+  args[0].kind = CB_ARG_INT;
+  args[0].v.i = value;
+  return RC_callback_async_schedule_c(
+    tok->id, tok->generation, 1, args
+  );
+}
+"
+
+ffi_direct_schedule <- tcc_ffi() |>
+  tcc_source(code_direct_schedule) |>
+  tcc_bind(
+    schedule_direct = list(args = list("ptr", "i32"), returns = "i32")
+  ) |>
+  tcc_compile()
+
+expect_equal(
+  ffi_direct_schedule$schedule_direct(cb_ptr_direct, 4L),
+  0L,
+  info = "Direct main-thread async schedule succeeds"
+)
+expect_equal(
+  hits_direct,
+  4L,
+  info = "Direct main-thread async schedule executes without waiting for event-loop auto-drain"
+)
+close_if_valid(cb_direct)
+
+# A warning promoted to an error must be caught before it can unwind through
+# the TCC caller on the main-thread fast path.
+cb_direct_error <- tcc_callback(
+  function(x) stop("direct callback failure"),
+  signature = "void (*)(int)"
+)
+old_options <- options(warn = 2)
+direct_error_rc <- NULL
+invisible(capture.output(
+  direct_error_rc <- tryCatch(
+    ffi_direct_schedule$schedule_direct(
+      tcc_callback_ptr(cb_direct_error),
+      1L
+    ),
+    finally = options(old_options)
+  ),
+  type = "message"
+))
+expect_equal(
+  direct_error_rc,
+  -5L,
+  info = "Main-thread async callback non-local jumps become dispatch failures"
+)
+close_if_valid(cb_direct_error)
+
+# Test: queued R-level async scheduling auto-fires during R event-loop activity.
+# This exercises the input-handler/message pump path without a manual drain call.
+hits_event_loop <- 0L
+cb_event_loop <- tcc_callback(
+  function(x) {
+    hits_event_loop <<- hits_event_loop + x
+    NULL
+  },
+  signature = "void (*)(int)"
+)
+tcc_callback_async_schedule(cb_event_loop, list(5L))
+for (i in seq_len(100)) {
+  if (hits_event_loop == 5L) {
+    break
+  }
+  Sys.sleep(0.02)
+}
+expect_equal(
+  hits_event_loop,
+  5L,
+  info = "Queued async callback auto-fires during R event-loop activity without manual drain"
+)
+close_if_valid(cb_event_loop)
+
+# A queued task must not target a new callback that reuses the same registry
+# slot after the original callback is closed.
+old_hits <- 0L
+new_hits <- 0L
+queue_then_replace <- function() {
+  old <- tcc_callback(
+    function(x) {
+      old_hits <<- old_hits + x
+      NULL
+    },
+    signature = "void (*)(int)"
+  )
+  tcc_callback_async_schedule(old, list(7L))
+  tcc_callback_close(old)
+
+  replacement <- tcc_callback(
+    function(x) {
+      new_hits <<- new_hits + x
+      NULL
+    },
+    signature = "void (*)(int)"
+  )
+  on.exit(close_if_valid(replacement), add = TRUE)
+  tcc_callback_async_drain()
+}
+queue_then_replace()
+expect_equal(
+  old_hits,
+  0L,
+  info = "Closing a callback cancels its queued fire-and-forget invocation"
+)
+expect_equal(
+  new_hits,
+  0L,
+  info = "A queued callback cannot jump to a replacement registry entry"
+)
+
+# Test: async trampoline error paths return the declared C default without
+# attempting to call R APIs from the worker-capable trampoline body.
+# A closed callback keeps the callback-pointer token alive with id = -1, which
+# exercises the early invalid-token branch. RC_cleanup_callbacks() invalidates
+# the registry while leaving a non-negative token id, which exercises the
+# schedule-failure branch.
+code_invalid_async <- "
+#define _Complex
+
+int call_async_i32(int (*cb)(void* ctx, int), void* ctx, int x) {
+  return cb(ctx, x);
+}
+
+void call_async_void(void (*cb)(void* ctx, int), void* ctx, int x) {
+  cb(ctx, x);
+}
+"
+
+ffi_invalid_async <- tcc_ffi() |>
+  tcc_source(code_invalid_async) |>
+  tcc_bind(
+    call_async_i32 = list(
+      args = list("callback_async:int(int)", "ptr", "i32"),
+      returns = "i32"
+    ),
+    call_async_void = list(
+      args = list("callback_async:void(int)", "ptr", "i32"),
+      returns = "void"
+    )
+  ) |>
+  tcc_compile()
+
+.Call("RC_callback_async_failure_reset", PACKAGE = "Rtinycc")
+
+invalid_hits <- 0L
+cb_invalid_i32 <- tcc_callback(
+  function(x) {
+    invalid_hits <<- invalid_hits + 1L
+    x + 1L
+  },
+  signature = "int (*)(int)"
+)
+cb_ptr_invalid_i32 <- tcc_callback_ptr(cb_invalid_i32)
+tcc_callback_close(cb_invalid_i32)
+invalid_res <- NULL
+expect_silent(
+  invalid_res <- ffi_invalid_async$call_async_i32(cb_invalid_i32, cb_ptr_invalid_i32, 7L),
+  info = "Closed async callback token follows invalid-token error path without warning"
+)
+expect_true(
+  is.na(invalid_res),
+  info = "Invalid-token async callback returns default integer sentinel"
+)
+expect_equal(
+  invalid_hits,
+  0L,
+  info = "Invalid-token async callback does not invoke the released R function"
+)
+expect_equal(
+  unname(.Call("RC_callback_async_failure_status", PACKAGE = "Rtinycc")),
+  c(1L, -2L),
+  info = "Invalid-token async callback records an observable failure code"
+)
+expect_silent(
+  ffi_invalid_async$call_async_void(cb_invalid_i32, cb_ptr_invalid_i32, 7L),
+  info = "Void async invalid-token path returns without warning"
+)
+expect_equal(
+  unname(.Call("RC_callback_async_failure_status", PACKAGE = "Rtinycc")),
+  c(2L, -2L),
+  info = "Void async invalid-token path records an observable failure code"
+)
+
+cb_stale_i32 <- tcc_callback(function(x) x + 10L, signature = "int (*)(int)")
+cb_ptr_stale_i32 <- tcc_callback_ptr(cb_stale_i32)
+.Call("RC_cleanup_callbacks", PACKAGE = "Rtinycc")
+stale_res <- NULL
+expect_silent(
+  stale_res <- ffi_invalid_async$call_async_i32(cb_stale_i32, cb_ptr_stale_i32, 8L),
+  info = "Stale async callback token follows schedule-failure error path without warning"
+)
+expect_true(
+  is.na(stale_res),
+  info = "Schedule-failure async callback returns default integer sentinel"
+)
+expect_equal(
+  unname(.Call("RC_callback_async_failure_status", PACKAGE = "Rtinycc")),
+  c(3L, -2L),
+  info = "Schedule-failure async callback records an observable failure code"
+)
+
 # Test: non-void async callback returns the real computed value (synchronous path).
 #
 # The worker thread blocks on the cond/SendMessage until R drains.
@@ -223,6 +458,13 @@ close_if_valid(cb_async)
 cb_async_int <- tcc_callback(
   function(x) x * 3L,
   signature = "int (*)(int)"
+)
+# RC_cleanup_callbacks() above made the stale slot reusable. Finalizing its old
+# token must not invalidate the new callback occupying that slot.
+tcc_callback_close(cb_stale_i32)
+expect_true(
+  tcc_callback_valid(cb_async_int),
+  info = "A stale callback token cannot invalidate a reused registry slot"
 )
 cb_ptr_async_int <- tcc_callback_ptr(cb_async_int)
 
@@ -305,6 +547,80 @@ expect_true(
   info = "Non-void async callback returns real computed value (7 * 3 = 21)"
 )
 close_if_valid(cb_async_int)
+
+# Closing a callback from inside its own R function must not invalidate the
+# return-type metadata still needed by the active trampoline.
+cb_self_close <- NULL
+cb_self_close <- tcc_callback(
+  function(x) {
+    tcc_callback_close(cb_self_close)
+    x + 1L
+  },
+  signature = "int (*)(int)"
+)
+self_close_result <- ffi_async_sync$start_int_worker(
+  cb_self_close,
+  tcc_callback_ptr(cb_self_close),
+  41L
+)
+for (i in seq_len(50)) {
+  tcc_callback_async_drain()
+  if (ffi_async_sync$is_int_worker_done() != 0L) {
+    break
+  }
+  Sys.sleep(0.01)
+}
+self_close_result <- ffi_async_sync$join_int_worker()
+expect_equal(
+  self_close_result,
+  42L,
+  info = "An async callback may close itself without invalidating its result"
+)
+expect_false(
+  tcc_callback_valid(cb_self_close),
+  info = "A self-closed callback remains invalid after returning"
+)
+
+# A non-local jump while the main thread executes a queued task must still
+# signal the blocked worker and return a typed failure instead of deadlocking.
+.Call("RC_callback_async_failure_reset", PACKAGE = "Rtinycc")
+cb_async_jump <- tcc_callback(
+  function(x) stop("queued callback failure"),
+  signature = "int (*)(int)"
+)
+old_options <- options(warn = 2)
+queued_jump_result <- NULL
+invisible(capture.output(
+  tryCatch(
+    {
+      ffi_async_sync$start_int_worker(
+        cb_async_jump,
+        tcc_callback_ptr(cb_async_jump),
+        1L
+      )
+      for (i in seq_len(50)) {
+        tcc_callback_async_drain()
+        if (ffi_async_sync$is_int_worker_done() != 0L) {
+          break
+        }
+        Sys.sleep(0.01)
+      }
+      queued_jump_result <- ffi_async_sync$join_int_worker()
+    },
+    finally = options(old_options)
+  ),
+  type = "message"
+))
+expect_true(
+  is.na(queued_jump_result),
+  info = "Queued callback non-local jump returns the declared default"
+)
+expect_equal(
+  unname(.Call("RC_callback_async_failure_status", PACKAGE = "Rtinycc")),
+  c(1L, -5L),
+  info = "Queued callback non-local jump is recorded as a dispatch failure"
+)
+close_if_valid(cb_async_jump)
 
 # Test: non-void async callback (double return) from worker thread
 cb_async_dbl <- tcc_callback(
@@ -392,6 +708,140 @@ expect_true(
   info = "Non-void async callback returns real double value (2.5 + 0.5 = 3.0)"
 )
 close_if_valid(cb_async_dbl)
+
+# Async result transport must check the active union kind instead of reading
+# whichever member the binding expected.
+.Call("RC_callback_async_failure_reset", PACKAGE = "Rtinycc")
+ffi_async_result_checks <- tcc_ffi() |>
+  tcc_source(
+    "
+    #include <stdint.h>
+    int call_async_i32(int (*cb)(void*, int), void *ctx, int x) {
+      return cb(ctx, x);
+    }
+    uint8_t call_async_u8(uint8_t (*cb)(void*, uint8_t),
+                          void *ctx, uint8_t x) {
+      return cb(ctx, x);
+    }
+    int64_t call_async_i64(int64_t (*cb)(void*, int64_t),
+                           void *ctx, int64_t x) {
+      return cb(ctx, x);
+    }
+    int64_t call_async_i64_max(int64_t (*cb)(void*, int64_t), void *ctx) {
+      return cb(ctx, INT64_MAX);
+    }
+    "
+  ) |>
+  tcc_bind(
+    call_async_i32 = list(
+      args = list("callback_async:int(int)", "ptr", "i32"),
+      returns = "i32"
+    ),
+    call_async_u8 = list(
+      args = list("callback_async:uint8_t(uint8_t)", "ptr", "u8"),
+      returns = "u8"
+    ),
+    call_async_i64 = list(
+      args = list("callback_async:int64_t(int64_t)", "ptr", "i64"),
+      returns = "i64"
+    ),
+    call_async_i64_max = list(
+      args = list("callback_async:int64_t(int64_t)", "ptr"),
+      returns = "i64"
+    )
+  ) |>
+  tcc_compile()
+
+cb_wrong_kind <- tcc_callback(
+  function(x) 42.5,
+  signature = "double (*)(double)"
+)
+wrong_kind_result <- ffi_async_result_checks$call_async_i32(
+  cb_wrong_kind,
+  tcc_callback_ptr(cb_wrong_kind),
+  7L
+)
+expect_true(
+  is.na(wrong_kind_result),
+  info = "Async callback result-kind mismatch returns the declared default"
+)
+expect_equal(
+  unname(.Call("RC_callback_async_failure_status", PACKAGE = "Rtinycc")),
+  c(1L, -5L),
+  info = "Async callback result-kind mismatch is recorded"
+)
+close_if_valid(cb_wrong_kind)
+
+cb_u8_bad <- tcc_callback(
+  function(x) -1L,
+  signature = "uint8_t (*)(uint8_t)"
+)
+u8_bad_result <- ffi_async_result_checks$call_async_u8(
+  cb_u8_bad,
+  tcc_callback_ptr(cb_u8_bad),
+  0L
+)
+expect_equal(
+  u8_bad_result,
+  0L,
+  info = "Out-of-range async u8 callback result uses the declared default"
+)
+expect_equal(
+  unname(.Call("RC_callback_async_failure_status", PACKAGE = "Rtinycc")),
+  c(2L, -6L),
+  info = "Out-of-range async narrow callback result is recorded"
+)
+close_if_valid(cb_u8_bad)
+
+cb_i64_bad <- tcc_callback(
+  function(x) 1.5,
+  signature = "int64_t (*)(int64_t)"
+)
+i64_bad_result <- ffi_async_result_checks$call_async_i64(
+  cb_i64_bad,
+  tcc_callback_ptr(cb_i64_bad),
+  0
+)
+expect_equal(
+  i64_bad_result,
+  -2147483648,
+  info = "Non-integral async i64 callback result uses the declared default"
+)
+expect_equal(
+  unname(.Call("RC_callback_async_failure_status", PACKAGE = "Rtinycc")),
+  c(3L, -6L),
+  info = "Invalid async wide callback result is recorded"
+)
+close_if_valid(cb_i64_bad)
+
+wide_arg_hits <- 0L
+cb_i64_arg <- tcc_callback(
+  function(x) {
+    wide_arg_hits <<- wide_arg_hits + 1L
+    x
+  },
+  signature = "int64_t (*)(int64_t)"
+)
+i64_arg_result <- ffi_async_result_checks$call_async_i64_max(
+  cb_i64_arg,
+  tcc_callback_ptr(cb_i64_arg)
+)
+expect_equal(
+  i64_arg_result,
+  -2147483648,
+  info = "Inexact async i64 callback argument uses the declared default"
+)
+expect_equal(
+  wide_arg_hits,
+  0L,
+  info = "Inexact async i64 callback argument is not delivered to R"
+)
+expect_equal(
+  unname(.Call("RC_callback_async_failure_status", PACKAGE = "Rtinycc")),
+  c(4L, -7L),
+  info = "Inexact async wide callback argument is recorded"
+)
+close_if_valid(cb_i64_arg)
 
 # Test: non-void async pointer callback preserves non-ownership semantics.
 ptr_async_seen_externalptr <- FALSE

@@ -1,4 +1,29 @@
+# Rtinycc 0.1.12
+
+- Prevent high-level FFI compilation modes that cannot produce safe callable bindings; `tcc_compile()` now fails clearly unless output is in-memory.
+- Keep relocated TinyCC code alive while a `tcc_symbol` pointer remains reachable.
+- Validate struct and union pointer types before access or explicit release, use one host allocator for their storage on every platform, apply scalar FFI range and `NA` checks to generated composite setters, and reject long-lived borrowed `cstring` pointer setters in favor of explicit ownership.
+- Map C `long`, `size_t`, and pointer-width integer aliases according to the active platform ABI, and reject unsupported by-value scalar types such as `long double` instead of guessing an incompatible calling convention.
+- Add `tcc_output_file()` for low-level non-memory artifacts, enforce one-shot state finalization before callable symbols can escape, include the package's bundled headers in the default TinyCC search path, and correct the provenance and licensing records for vendored TinyCC and Protothreads sources.
+- Update the bundled TinyCC source to the wasm32-enabled `sounkou-bioinfo/tinycc` fork and fix a const-correctness warning reported by recent GCC toolchains.
+- Add a Fedora/GCC 16 R-devel check path that mirrors the CRAN Fedora build environment.
+- Add TinyCC SIMD bytecode examples showing CPU feature detection with `cpuid`/`xgetbv` and selected SSE2/AVX2 instructions emitted through `.byte` for mnemonics TinyCC does not parse.
+- Add `tcc_list_symbols()` to inspect global symbol names and resolved hexadecimal addresses known to a libtcc state.
+- Expand `tcc_call_symbol()` with `.C()`-style pointer argument calls for low-level in-memory symbols, including guarded copy-in/copy-out support for common R vector types, `Csingle`, read-only `SEXP` paths, and `NAOK` checking.
+- Improve ALTREP-aware copy-in paths by using `RAW_GET_REGION()` when copying raw vectors into native memory and scalar accessors for callback/struct scalar conversions. Clarify that mutable array FFI inputs can materialize ALTREP vectors when R exposes writable C storage.
+- Harden async callback draining so explicit drains only execute R callbacks on the recorded main R thread, direct main-thread async scheduling executes immediately instead of queueing and waiting on itself, and async trampoline scheduling failures are recorded without calling R APIs from worker-capable code.
+- Identify queued callbacks by registry generation so stale work cannot invoke a replacement callback, keep active callback return metadata stable across self-close, validate async result union kinds and numeric ranges before native casts, guard wide integer transport at R's exact numeric limit, and defer interrupts until worker contexts have been joined safely.
+
+# Rtinycc 0.1.11
+
+- Fix `PROTECT` and memory-balance hygiene bugs in internal C state initialization (`RC_libtcc_state_new`, `RC_libtcc_get_symbol`, and callback registration paths). Previously, class string attributes could be inadvertently allocated without proper protection.
+- Fix a stack-depth and protection imbalance bug in `RC_invoke_callback_internal` where callback execution could unexpectedly unprotect the `call` object prior to evaluation.
+
 # Rtinycc 0.1.10
+
+- Fix installation on musl-based Linux systems, including Alpine Linux, by
+  enabling TinyCC's musl configuration when a musl libc environment is
+  detected during configure.
 
 - Fix configure failure on macOS oldrel arm64 (Big Sur, clang 14). The bundled
   TinyCC Makefile pairs `-flat_namespace` with `-undefined warning` on clang

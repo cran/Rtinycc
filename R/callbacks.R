@@ -12,9 +12,9 @@
 #' that marshals arguments between C and R.
 #'
 #' @details
-#' Thread safety: callbacks are executed on the R main thread only. Invoking
-#' a callback from a worker thread is unsupported and may crash R. The
-#' \code{threadsafe} flag is currently informational only.
+#' Thread safety: ordinary `callback:<signature>` trampolines must be invoked
+#' on the R main thread. Use `callback_async:<signature>` when native workers
+#' need to dispatch to R. The \code{threadsafe} flag is informational only.
 #'
 #' If a callback raises an error, a warning is emitted and a type-appropriate
 #' default value is returned.
@@ -23,23 +23,31 @@
 #' argument type so a synchronous trampoline is generated. The trampoline
 #' expects a `void*` user-data pointer as its first argument; pass
 #' `tcc_callback_ptr(cb)` as the user-data argument to the C API. For
-#' thread-safe usage from worker threads, use `callback_async:<signature>`
-#' which schedules the call on the main thread and returns a default value.
+#' worker-thread dispatch, use `callback_async:<signature>`, which schedules
+#' the R call on the main thread. Void callbacks are fire-and-forget; non-void
+#' callbacks block the worker until the main thread returns the real result.
+#' Type-appropriate defaults are used only when dispatch or conversion fails.
 #'
 #' Pointer arguments (e.g., \code{double*}, \code{int*}) are passed as
 #' external pointers. Lengths must be supplied separately if needed.
+#'
+#' A callback `ptr` or `cstring` return is borrowed. C may consume it during the
+#' enclosing compiled call, but must not retain it after that call unless the
+#' owner is kept alive by some other explicit contract. Copy string data into
+#' C-owned storage when it must escape the callback call chain.
 #'
 #' The return type may be any scalar type supported by the FFI mappings
 #' (e.g., \code{i32}, \code{f64}, \code{bool}, \code{cstring}), or
 #' \code{SEXP} to return an R object directly.
 #'
-#' Callback lifetime: callbacks are eventually released by finalizers and
-#' package unload. Call `tcc_callback_close()` when you want deterministic
-#' invalidation and earlier release of the preserved R function.
+#' Callback lifetime: callbacks are eventually released by finalizers. Call
+#' `tcc_callback_close()` when you want deterministic invalidation and earlier
+#' release of the preserved R function.
 #'
 #' @param fun An R function to be called from C
 #' @param signature C function signature string (e.g., "double (*)(int, double)")
-#' @param threadsafe Whether to enable thread-safe invocation (experimental)
+#' @param threadsafe Informational compatibility flag. Thread dispatch is
+#'   selected by `callback_async:<signature>` in [tcc_bind()], not by this flag.
 #' @return A tcc_callback object (externalptr wrapper)
 #' @export
 tcc_callback <- function(fun, signature, threadsafe = FALSE) {
@@ -131,7 +139,12 @@ print.tcc_callback <- function(x, ...) {
 
   cat("<tcc_callback>\n")
   cat("  Signature: ", format_signature(sig), "\n", sep = "")
-  cat("  Thread-safe: ", if (threadsafe) "yes" else "no", "\n", sep = "")
+  cat(
+    "  Thread-safe flag: ",
+    if (threadsafe) "requested (informational)" else "not requested",
+    "\n",
+    sep = ""
+  )
   cat(
     "  Status: ",
     if (is_callback_valid(x)) "valid" else "invalid",
@@ -385,7 +398,9 @@ parse_callback_type <- function(type) {
 #' Schedule a callback to run on the main thread
 #'
 #' Enqueue a callback for main-thread execution. Arguments must be basic
-#' scalars or external pointers.
+#' scalars or external pointers. The callback must remain open until the task
+#' executes. External-pointer arguments are borrowed addresses: their owners
+#' and pointees must remain valid until execution finishes.
 #'
 #' @param callback A tcc_callback object
 #' @param args List of arguments to pass to the callback
@@ -410,8 +425,11 @@ tcc_callback_async_schedule <- function(callback, args = list()) {
 #' only needed in test harnesses or tight batch loops that never yield
 #' to R's event loop.
 #'
-#' TCC-compiled C code running on the main thread can call
-#' \code{RC_callback_async_drain_c()} directly instead of returning to R.
+#' TCC-compiled C code that is known to be running on the main R thread can
+#' call \code{RC_callback_async_drain_c()} directly instead of returning to R.
+#' Functions bound with `callback_async:*` arguments are normally executed on a
+#' worker by the generated wrapper while the main thread drains, so user code in
+#' that target function should not assume it is itself on the main thread.
 #'
 #' @return NULL (invisible)
 #' @export
@@ -484,7 +502,10 @@ generate_trampoline <- function(trampoline_name, sig) {
   }
 
   # Call the runtime
-  lines <- c(lines, "  SEXP result = RC_invoke_callback_id(tok->id, args);")
+  lines <- c(
+    lines,
+    "  SEXP result = RC_invoke_callback_id(tok->id, tok->generation, args);"
+  )
 
   if (n_args > 0) {
     lines <- c(lines, "  UNPROTECT(1);")
@@ -509,9 +530,11 @@ generate_trampoline <- function(trampoline_name, sig) {
 # non-void return -> synchronous via RC_callback_async_schedule_sync_c
 #                   (SendMessage on Windows, pthread_cond on Linux).
 #                   Blocks the worker thread until the main thread
-#                   services the callback.  C code on the main thread
-#                   can call RC_callback_async_drain_c() in a loop
-#                   rather than returning to R.
+#                   services the callback. C code known to be on the main
+#                   thread can call RC_callback_async_drain_c() in a loop
+#                   rather than returning to R; generated callback_async
+#                   wrappers run the target function on a worker and drain
+#                   from the wrapper's main-thread side.
 generate_async_trampoline <- function(trampoline_name, sig) {
   unsupported <- vapply(sig$arg_types, async_type_unsupported, logical(1))
   if (any(unsupported)) {
@@ -559,10 +582,7 @@ generate_async_trampoline <- function(trampoline_name, sig) {
     ),
     "  callback_token_t* tok = (callback_token_t*)cb;",
     "  if (!tok || tok->id < 0) {",
-    sprintf(
-      "    Rf_warning(\"Invalid callback token in %s\");",
-      trampoline_name
-    ),
+    "    RC_callback_async_note_failure_c(-2);",
     get_c_default_return(sig$return_type, indent = 4L),
     "  }"
   )
@@ -570,7 +590,15 @@ generate_async_trampoline <- function(trampoline_name, sig) {
   if (n_args > 0) {
     lines <- c(lines, sprintf("  cb_arg_t args[%d];", n_args))
     for (i in seq_len(n_args)) {
-      lines <- c(lines, generate_cb_arg_assignment(i, sig$arg_types[i]))
+      lines <- c(
+        lines,
+        generate_async_arg_guard(
+          i,
+          sig$arg_types[i],
+          sig$return_type
+        ),
+        generate_cb_arg_assignment(i, sig$arg_types[i])
+      )
     }
   } else {
     lines <- c(lines, "  cb_arg_t* args = NULL;")
@@ -580,32 +608,26 @@ generate_async_trampoline <- function(trampoline_name, sig) {
     lines <- c(
       lines,
       sprintf(
-        "  int rc = RC_callback_async_schedule_c(tok->id, %d, %s);",
+        "  int rc = RC_callback_async_schedule_c(tok->id, tok->generation, %d, %s);",
         n_args,
         if (n_args > 0) "args" else "NULL"
       ),
       "  if (rc != 0) {",
-      sprintf(
-        "    Rf_warning(\"Async schedule failed (rc=%%d) in %s\", rc);",
-        trampoline_name
-      ),
+      "    RC_callback_async_note_failure_c(rc);",
       "  }",
       "  return;"
     )
   } else {
     lines <- c(
       lines,
-      "  cb_result_t result;",
+      "  cb_result_t result = {0};",
       sprintf(
-        "  int rc = RC_callback_async_schedule_sync_c(tok->id, %d, %s, &result);",
+        "  int rc = RC_callback_async_schedule_sync_c(tok->id, tok->generation, %d, %s, &result);",
         n_args,
         if (n_args > 0) "args" else "NULL"
       ),
       "  if (rc != 0) {",
-      sprintf(
-        "    Rf_warning(\"Async schedule failed (rc=%%d) in %s\", rc);",
-        trampoline_name
-      ),
+      "    RC_callback_async_note_failure_c(rc);",
       get_c_default_return(sig$return_type, indent = 4L),
       "  }",
       get_async_result_return(sig$return_type)
@@ -669,18 +691,92 @@ async_result_kind <- function(return_type) {
 get_async_result_return <- function(return_type) {
   kind <- async_result_kind(return_type)
   rt <- callback_c_decl_type(return_type)
-  switch(
+  expected_kind <- switch(
     kind,
-    "int" = sprintf("  return (%s)result.v.i;", rt),
-    "real" = sprintf("  return (%s)result.v.d;", rt),
-    "logical" = sprintf("  return (%s)result.v.i;", rt),
-    "ptr" = sprintf("  return (%s)result.v.p;", rt),
+    int = "CB_RESULT_INT",
+    real = "CB_RESULT_REAL",
+    logical = "CB_RESULT_LOGICAL",
+    ptr = "CB_RESULT_PTR",
     stop(
       "BUG: unhandled async result kind for return type: ",
       return_type,
       call. = FALSE
     )
   )
+
+  lines <- c(
+    sprintf("  if (result.kind != %s) {", expected_kind),
+    "    RC_callback_async_note_failure_c(-5);",
+    get_c_default_return(return_type, indent = 4L),
+    "  }"
+  )
+
+  type_name <- trimws(return_type)
+  bounds <- if (type_name %in% c("i8", "int8_t")) {
+    c("INT8_MIN", "INT8_MAX")
+  } else if (type_name %in% c("i16", "int16_t")) {
+    c("INT16_MIN", "INT16_MAX")
+  } else if (type_name %in% c("u8", "uint8_t")) {
+    c("0", "UINT8_MAX")
+  } else if (type_name %in% c("u16", "uint16_t")) {
+    c("0", "UINT16_MAX")
+  } else {
+    NULL
+  }
+  if (!is.null(bounds)) {
+    lines <- c(
+      lines,
+      sprintf(
+        "  if (result.v.i < %s || result.v.i > %s) {",
+        bounds[[1]],
+        bounds[[2]]
+      ),
+      "    RC_callback_async_note_failure_c(-6);",
+      get_c_default_return(return_type, indent = 4L),
+      "  }"
+    )
+  }
+
+  wide_check <- if (type_name %in% c("i64", "int64_t")) {
+    paste0(
+      "!isfinite(result.v.d) || trunc(result.v.d) != result.v.d || ",
+      "fabs(result.v.d) > 9007199254740992.0"
+    )
+  } else if (type_name %in% c("u32", "uint32_t")) {
+    paste0(
+      "!isfinite(result.v.d) || trunc(result.v.d) != result.v.d || ",
+      "result.v.d < 0.0 || result.v.d > (double)UINT32_MAX"
+    )
+  } else if (type_name %in% c("u64", "uint64_t")) {
+    paste0(
+      "!isfinite(result.v.d) || trunc(result.v.d) != result.v.d || ",
+      "result.v.d < 0.0 || result.v.d > 9007199254740992.0"
+    )
+  } else {
+    NULL
+  }
+  if (!is.null(wide_check)) {
+    lines <- c(
+      lines,
+      sprintf("  if (%s) {", wide_check),
+      "    RC_callback_async_note_failure_c(-6);",
+      get_c_default_return(return_type, indent = 4L),
+      "  }"
+    )
+  }
+
+  lines <- c(
+    lines,
+    switch(
+      kind,
+      "int" = sprintf("  return (%s)result.v.i;", rt),
+      "real" = sprintf("  return (%s)result.v.d;", rt),
+      "logical" = sprintf("  return (%s)result.v.i;", rt),
+      "ptr" = sprintf("  return (%s)result.v.p;", rt)
+    )
+  )
+
+  lines
 }
 
 async_type_unsupported <- function(c_type) {
@@ -706,6 +802,34 @@ async_type_unsupported <- function(c_type) {
       "uint16_t",
       "u16"
     )
+}
+
+generate_async_arg_guard <- function(index, c_type, return_type) {
+  type_name <- trimws(c_type)
+  arg_name <- paste0("arg", index)
+  condition <- if (type_name %in% c("i64", "int64_t")) {
+    paste0(
+      arg_name,
+      " < -9007199254740992LL || ",
+      arg_name,
+      " > 9007199254740992LL"
+    )
+  } else if (type_name %in% c("u64", "uint64_t")) {
+    paste0(arg_name, " > 9007199254740992ULL")
+  } else {
+    NULL
+  }
+
+  if (is.null(condition)) {
+    return(character())
+  }
+
+  c(
+    sprintf("  if (%s) {", condition),
+    "    RC_callback_async_note_failure_c(-7);",
+    get_c_default_return(return_type, indent = 4L),
+    "  }"
+  )
 }
 
 generate_cb_arg_assignment <- function(index, c_type) {

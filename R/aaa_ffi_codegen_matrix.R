@@ -580,7 +580,13 @@ RTINYCC_FFI_SEMANTICS <- list(
       ownership = "R",
       r_storage = "raw",
       checks = character(),
-      notes = "Zero-copy borrow of RAW(x); sound only while no fresh R allocations are inserted before the C call."
+      notes = paste(
+        "Mutable pointer input through RAW(x); for ordinary materialized vectors",
+        "no extra buffer is allocated. ALTREP vectors follow R's writable pointer",
+        "materialization path. ALTREP-specific read-only or temp-buffer behavior",
+        "needs a separate access-mode contract because this type permits mutation",
+        "and pointer aliasing."
+      )
     ),
     return = list(
       mode = "copy_array",
@@ -601,7 +607,13 @@ RTINYCC_FFI_SEMANTICS <- list(
       ownership = "R",
       r_storage = "integer",
       checks = character(),
-      notes = "Zero-copy borrow of INTEGER(x); sound only while no fresh R allocations are inserted before the C call."
+      notes = paste(
+        "Mutable pointer input through INTEGER(x); for ordinary materialized",
+        "vectors no extra buffer is allocated. ALTREP vectors follow R's writable",
+        "pointer materialization path. ALTREP-specific read-only or temp-buffer",
+        "behavior needs a separate access-mode contract because this type permits",
+        "mutation and pointer aliasing."
+      )
     ),
     return = list(
       mode = "copy_array",
@@ -622,7 +634,13 @@ RTINYCC_FFI_SEMANTICS <- list(
       ownership = "R",
       r_storage = "numeric",
       checks = character(),
-      notes = "Zero-copy borrow of REAL(x); sound only while no fresh R allocations are inserted before the C call."
+      notes = paste(
+        "Mutable pointer input through REAL(x); for ordinary materialized vectors",
+        "no extra buffer is allocated. ALTREP vectors follow R's writable pointer",
+        "materialization path. ALTREP-specific read-only or temp-buffer behavior",
+        "needs a separate access-mode contract because this type permits mutation",
+        "and pointer aliasing."
+      )
     ),
     return = list(
       mode = "copy_array",
@@ -643,7 +661,13 @@ RTINYCC_FFI_SEMANTICS <- list(
       ownership = "R",
       r_storage = "logical",
       checks = character(),
-      notes = "Zero-copy borrow of LOGICAL(x); sound only while no fresh R allocations are inserted before the C call."
+      notes = paste(
+        "Mutable pointer input through LOGICAL(x); for ordinary materialized",
+        "vectors no extra buffer is allocated. ALTREP vectors follow R's writable",
+        "pointer materialization path. ALTREP-specific read-only or temp-buffer",
+        "behavior needs a separate access-mode contract because this type permits",
+        "mutation and pointer aliasing."
+      )
     ),
     return = list(
       mode = "copy_array",
@@ -805,14 +829,19 @@ RTINYCC_CALLBACK_SEMANTICS <- list(
       callback_token = TRUE,
       pointer_pointee = TRUE
     ),
+    identity = list(
+      mode = "registry-slot-plus-generation",
+      close_cancels_queued = TRUE
+    ),
     returns = list(
       default_on_error = "NA-like scalar or NULL pointer",
       nonvoid_mode = "sync-result-channel"
     ),
     notes = paste(
       "Async callbacks marshal arguments into cb_arg_t task payloads,",
-      "duplicate cstring payloads for cross-thread safety, and reconstruct",
-      "fresh R objects on the main thread before invocation."
+      "duplicate cstring payloads for cross-thread safety, identify queued",
+      "work by registry slot plus generation, and reconstruct fresh R objects",
+      "on the main thread before invocation. Pointer pointees remain borrowed."
     )
   )
 )
@@ -860,6 +889,14 @@ RTINYCC_CALLBACK_ABI_SPECS <- list(
           info = "Async trampoline normalizes f32 to float in the C signature"
         ),
         list(
+          pattern = "RC_callback_async_schedule_sync_c\\(tok->id, tok->generation,",
+          info = "Async trampoline carries registry generation into queued work"
+        ),
+        list(
+          pattern = "result.kind != CB_RESULT_REAL",
+          info = "Async trampoline validates the active result union member"
+        ),
+        list(
           pattern = "return \\(float\\)result.v.d;",
           info = "Async trampoline normalizes f32 return casts to float"
         )
@@ -880,6 +917,10 @@ RTINYCC_CALLBACK_ABI_SPECS <- list(
         list(
           pattern = "args\\[0\\]\\.v\\.p = arg1;",
           info = "Async pointer trampoline stores raw pointer value without pointee copy"
+        ),
+        list(
+          pattern = "result.kind != CB_RESULT_PTR",
+          info = "Async pointer trampoline validates its result kind"
         ),
         list(
           pattern = "return \\(void\\*\\)result.v.p;",
@@ -1042,9 +1083,11 @@ RTINYCC_COMPOSITE_SEMANTICS <- list(
     copy = FALSE,
     ownership = "owned-native-storage",
     finalizer = TRUE,
+    allocator = "RC_host_calloc_c/RC_host_free_c",
     notes = paste(
-      "Struct constructors allocate owned native storage and return an",
-      "external pointer tagged with the struct type and a finalizer."
+      "Struct constructors allocate owned native storage through the package",
+      "host allocator and return an external pointer tagged with the struct",
+      "type and a matching finalizer."
     )
   ),
   struct_field_addr = list(
@@ -1083,8 +1126,9 @@ RTINYCC_COMPOSITE_SEMANTICS <- list(
     write_copy = TRUE,
     ownership = "struct-owned-storage",
     notes = paste(
-      "Raw struct helpers copy bytes out to a fresh RAWSXP or copy bytes from",
-      "a RAWSXP back into the struct buffer with memcpy()."
+      "Raw struct helpers copy bytes out to a fresh RAWSXP with memcpy() and",
+      "copy bytes from a RAWSXP back into the struct buffer with RAW_GET_REGION(),",
+      "which avoids asking R for a writable raw-vector data pointer on copy-in."
     )
   ),
   struct_array_field = list(
@@ -1106,9 +1150,10 @@ RTINYCC_COMPOSITE_SEMANTICS <- list(
     copy = FALSE,
     ownership = "owned-native-storage",
     finalizer = TRUE,
+    allocator = "RC_host_calloc_c/RC_host_free_c",
     notes = paste(
-      "Union constructors allocate owned native storage and expose member",
-      "getters/setters over that shared buffer."
+      "Union constructors allocate owned native storage through the package",
+      "host allocator and expose member getters/setters over that shared buffer."
     )
   ),
   union_nested_struct_view = list(
@@ -1143,12 +1188,14 @@ RTINYCC_COMPOSITE_SEMANTICS <- list(
     helper = "tcc_global",
     scalar_only = TRUE,
     arrays_forbidden = TRUE,
+    cstring_forbidden = TRUE,
     borrow = FALSE,
     copy = TRUE,
     ownership = "compiled-unit",
     notes = paste(
-      "Global helpers are limited to scalar types and reuse the same wrapper",
-      "input/output coercion rules as ordinary scalar bindings."
+      "Global helpers are limited to scalar types and reuse ordinary scalar",
+      "coercion rules, except cstring is rejected because a global cannot",
+      "retain the borrowed translated R string pointer safely."
     )
   ),
   bitfield_native = list(
@@ -1195,6 +1242,10 @@ RTINYCC_COMPOSITE_CODEGEN_SPECS <- list(
       structs = list(student = c(id = "i32", grade = "f64"))
     ),
     patterns = list(
+      list(
+        pattern = "RC_host_calloc_c(1, sizeof(struct student))",
+        fixed = TRUE
+      ),
       list(
         pattern = "return RC_make_owned_composite_ptr(p, Rf_install(\"struct_student\"));",
         fixed = TRUE
@@ -1253,7 +1304,7 @@ RTINYCC_COMPOSITE_CODEGEN_SPECS <- list(
   ),
   list(
     name = "struct_raw_access_copy",
-    info = "struct raw access helpers use memcpy copy paths",
+    info = "struct raw access helpers use explicit copy paths",
     generate_args = list(
       symbols = list(),
       c_code = "struct packet { unsigned char data[8]; };",
@@ -1276,7 +1327,7 @@ RTINYCC_COMPOSITE_CODEGEN_SPECS <- list(
         fixed = TRUE
       ),
       list(
-        pattern = "memcpy(p, RAW(raw),",
+        pattern = "RAW_GET_REGION(raw, 0, n_copy, (Rbyte*)p)",
         fixed = TRUE
       )
     )
@@ -1295,6 +1346,10 @@ RTINYCC_COMPOSITE_CODEGEN_SPECS <- list(
       )
     ),
     patterns = list(
+      list(
+        pattern = "RC_host_calloc_c(1, sizeof(union wrapper))",
+        fixed = TRUE
+      ),
       list(
         pattern = "return RC_make_owned_composite_ptr(p, Rf_install(\"union_wrapper\"));",
         fixed = TRUE

@@ -37,7 +37,7 @@ rtinycc_return_type_info <- function(x) {
 # Generate C code to extract R SEXP to C type
 generate_c_input <- function(arg_name, r_name, ffi_type) {
   type_name <- if (is_rtinycc_ffi_type(ffi_type)) ffi_type$name else ffi_type
-  check_ffi_type(type_name, paste0("argument '", arg_name, "'"))
+  check_ffi_type(type_name, str_interp("argument '{arg_name}'"))
   special <- ffi_input_special_rule(type_name, arg_name, r_name)
   if (!is.null(special)) {
     return(special)
@@ -80,7 +80,7 @@ generate_c_return <- function(value_expr, ffi_type, arg_names = character()) {
         "  UNPROTECT(1);",
         "  return out;"
       ),
-      collapse = "\n"
+      sep = "", collapse = "\n"
     ))
   }
 
@@ -93,11 +93,11 @@ generate_c_return <- function(value_expr, ffi_type, arg_names = character()) {
 
 # Callback helper: generate a unique trampoline name per wrapper argument
 callback_trampoline_name <- function(wrapper_name, arg_index) {
-  paste0("trampoline_", wrapper_name, "_arg", arg_index)
+  str_interp("trampoline_{wrapper_name}_arg{arg_index}")
 }
 
 variadic_wrapper_name <- function(wrapper_name, n_varargs) {
-  paste0(wrapper_name, "__v", as.integer(n_varargs))
+  str_interp("{wrapper_name}__v{as.integer(n_varargs)}")
 }
 
 variadic_type_token <- function(x) {
@@ -120,7 +120,7 @@ variadic_wrapper_name_types <- function(wrapper_name, vararg_types) {
       collapse = "__"
     )
   }
-  paste0(wrapper_name, "__v", length(vararg_types), "__", suffix)
+  str_interp("{wrapper_name}__v{length(vararg_types)}__{suffix}")
 }
 
 generate_variadic_type_sequences <- function(allowed_types, n_varargs) {
@@ -187,16 +187,16 @@ generate_c_wrapper <- function(
   if (n_args > 0) {
     fixed_arg_names <- names(arg_types)
     if (is.null(fixed_arg_names) || all(fixed_arg_names == "")) {
-      fixed_arg_names <- paste0("arg", seq_along(arg_types))
+      fixed_arg_names <- sprintf("arg%d", seq_along(arg_types))
     }
     vararg_names <- if (length(vararg_types) > 0) {
-      paste0("vararg", seq_along(vararg_types))
+      sprintf("vararg%d", seq_along(vararg_types))
     } else {
       character(0)
     }
     arg_names <- c(fixed_arg_names, vararg_names)
     all_arg_types <- c(arg_types, vararg_types)
-    r_arg_names <- paste0("arg", seq_len(n_args), "_")
+    r_arg_names <- sprintf("arg%d_", seq_len(n_args))
 
     # Input conversions from SEXP to C types
     input_lines <- character(0)
@@ -214,7 +214,7 @@ generate_c_wrapper <- function(
           )
         }
         tramp_name <- callback_trampoline_name(
-          paste0("R_wrap_", symbol_name),
+          str_interp("R_wrap_{symbol_name}"),
           i
         )
         input_lines <- c(
@@ -275,7 +275,7 @@ generate_c_wrapper <- function(
       "SEXP %s(%s) {",
       wrapper_name,
       if (n_args > 0) {
-        paste0("SEXP ", r_arg_names, collapse = ", ")
+        paste("SEXP ", r_arg_names, sep = "", collapse = ", ")
       } else {
         "void"
       }
@@ -332,7 +332,7 @@ generate_async_exec_wrapper <- function(
       type_info <- if (is_rtinycc_ffi_type(ffi_type)) {
         ffi_type
       } else {
-        check_ffi_type(ffi_type, paste0("argument '", aname, "'"))
+        check_ffi_type(ffi_type, str_interp("argument '{aname}'"))
       }
       struct_fields <- c(
         struct_fields,
@@ -347,8 +347,8 @@ generate_async_exec_wrapper <- function(
     )
   }
 
-  struct_name <- paste0("_async_ctx_", wrapper_name)
-  thread_fn_name <- paste0("_async_fn_", wrapper_name)
+  struct_name <- str_interp("_async_ctx_{wrapper_name}")
+  thread_fn_name <- str_interp("_async_fn_{wrapper_name}")
 
   # --- Build struct definition ---
   struct_code <- c(
@@ -403,10 +403,10 @@ generate_async_exec_wrapper <- function(
       return_type,
       arg_names
     )
-    return_code <- paste0(
+    return_code <- paste(
       "  ",
       strsplit(return_conversion, "\n")[[1]],
-      collapse = "\n"
+      sep = "", collapse = "\n"
     )
   }
 
@@ -415,7 +415,7 @@ generate_async_exec_wrapper <- function(
       "SEXP %s(%s) {",
       wrapper_name,
       if (n_args > 0) {
-        paste0("SEXP ", r_arg_names, collapse = ", ")
+        paste("SEXP ", r_arg_names, sep = "", collapse = ", ")
       } else {
         "void"
       }
@@ -458,7 +458,7 @@ generate_external_declarations <- function(symbols) {
         arg_info <- lapply(
           arg_types,
           check_ffi_type,
-          context = paste0("symbol '", sym_name, "' argument")
+          context = str_interp("symbol '{sym_name}' argument")
         )
       }
       arg_decls <- paste(
@@ -500,7 +500,7 @@ generate_wrappers <- function(
 
   for (sym_name in names(symbols)) {
     sym <- symbols[[sym_name]]
-    base_wrapper_name <- paste0(prefix, sym_name)
+    base_wrapper_name <- str_interp("{prefix}{sym_name}")
 
     if (isTRUE(sym$variadic)) {
       vararg_mode <- sym$varargs_mode %||% "prefix"
@@ -652,12 +652,33 @@ generate_struct_helpers <- function(
   paste(helpers, collapse = "\n")
 }
 
+composite_pointer_line <- function(
+  kind,
+  type_name,
+  variable = "p",
+  ext = "ext",
+  require_owned = FALSE
+) {
+  c_type <- sprintf("%s %s", kind, type_name)
+  tag <- sprintf("%s_%s", kind, type_name)
+  sprintf(
+    "  %s *%s = (%s *)RC_check_composite_ptr(%s, Rf_install(\"%s\"), %d);",
+    c_type,
+    variable,
+    c_type,
+    ext,
+    tag,
+    as.integer(require_owned)
+  )
+}
+
 # Generate constructor
 generate_struct_new <- function(struct_name) {
   c(
     sprintf("SEXP R_wrap_struct_%s_new(void) {", struct_name),
     sprintf(
-      "  struct %s *p = calloc(1, sizeof(struct %s));",
+      "  struct %s *p = (struct %s *)RC_host_calloc_c(1, sizeof(struct %s));",
+      struct_name,
       struct_name,
       struct_name
     ),
@@ -675,10 +696,11 @@ generate_struct_new <- function(struct_name) {
 generate_struct_free <- function(struct_name) {
   c(
     sprintf("SEXP R_wrap_struct_%s_free(SEXP ext) {", struct_name),
-    "  if (R_ExternalPtrProtected(ext) != R_NilValue) {",
-    "    Rf_error(\"Cannot free borrowed view; free the owning object instead\");",
-    "  }",
-    "  RC_free_finalizer(ext);",
+    sprintf(
+      "  (void)RC_check_composite_ptr(ext, Rf_install(\"struct_%s\"), 1);",
+      struct_name
+    ),
+    "  RC_owned_native_finalizer(ext);",
     "  return R_NilValue;",
     "}",
     ""
@@ -694,8 +716,7 @@ generate_struct_getter <- function(struct_name, field_name, field_spec) {
         struct_name,
         field_name
       ),
-      sprintf("  struct %s *p = R_ExternalPtrAddr(ext);", struct_name),
-      sprintf("  if (!p) Rf_error(\"Null pointer\");"),
+      composite_pointer_line("struct", struct_name),
       sprintf(
         "  return RC_make_borrowed_view(p->%s, Rf_install(\"rtinycc_borrowed\"), ext);",
         field_name
@@ -718,8 +739,7 @@ generate_struct_getter <- function(struct_name, field_name, field_spec) {
         struct_name,
         field_name
       ),
-      sprintf("  struct %s *p = R_ExternalPtrAddr(ext);", struct_name),
-      sprintf("  if (!p) Rf_error(\"Null pointer\");"),
+      composite_pointer_line("struct", struct_name),
       sprintf(
         "  return RC_make_borrowed_view(&p->%s, Rf_install(\"struct_%s\"), ext);",
         field_name,
@@ -738,8 +758,7 @@ generate_struct_getter <- function(struct_name, field_name, field_spec) {
       struct_name,
       field_name
     ),
-    sprintf("  struct %s *p = R_ExternalPtrAddr(ext);", struct_name),
-    sprintf("  if (!p) Rf_error(\"Null pointer\");"),
+    composite_pointer_line("struct", struct_name),
     paste("  ", return_code, collapse = "\n"),
     "}",
     ""
@@ -761,8 +780,7 @@ generate_struct_array_getter <- function(struct_name, field_name, field_spec) {
       struct_name,
       field_name
     ),
-    sprintf("  struct %s *p = R_ExternalPtrAddr(ext);", struct_name),
-    sprintf("  if (!p) Rf_error(\"Null pointer\");"),
+    composite_pointer_line("struct", struct_name),
     "  int idx = asInteger(idx_);",
     sprintf(
       "  if (idx < 0 || idx >= %d) Rf_error(\"index out of bounds\");",
@@ -789,8 +807,7 @@ generate_struct_array_setter <- function(struct_name, field_name, field_spec) {
       struct_name,
       field_name
     ),
-    sprintf("  struct %s *p = R_ExternalPtrAddr(ext);", struct_name),
-    sprintf("  if (!p) Rf_error(\"Null pointer\");"),
+    composite_pointer_line("struct", struct_name),
     "  int idx = asInteger(idx_);",
     sprintf(
       "  if (idx < 0 || idx >= %d) Rf_error(\"index out of bounds\");",
@@ -821,13 +838,13 @@ generate_struct_setter <- function(struct_name, field_name, field_spec) {
         struct_name,
         field_name
       ),
-      sprintf("  struct %s *p = R_ExternalPtrAddr(ext);", struct_name),
-      sprintf("  if (!p) Rf_error(\"Null pointer\");"),
-      sprintf(
-        "  struct %s *child = R_ExternalPtrAddr(val);",
-        nested_struct_name
+      composite_pointer_line("struct", struct_name),
+      composite_pointer_line(
+        "struct",
+        nested_struct_name,
+        variable = "child",
+        ext = "val"
       ),
-      "  if (!child) Rf_error(\"Null pointer\");",
       sprintf(
         "  memcpy(&p->%s, child, sizeof(struct %s));",
         field_name,
@@ -847,8 +864,7 @@ generate_struct_setter <- function(struct_name, field_name, field_spec) {
       struct_name,
       field_name
     ),
-    sprintf("  struct %s *p = R_ExternalPtrAddr(ext);", struct_name),
-    sprintf("  if (!p) Rf_error(\"Null pointer\");"),
+    composite_pointer_line("struct", struct_name),
     paste("  ", setter_code, collapse = "\n"),
     "  return ext;", # Return ext for chaining
     "}",
@@ -890,8 +906,7 @@ generate_field_addr <- function(struct_name, field_name) {
       struct_name,
       field_name
     ),
-    sprintf("  struct %s *p = R_ExternalPtrAddr(ext);", struct_name),
-    sprintf("  if (!p) Rf_error(\"Null pointer\");"),
+    composite_pointer_line("struct", struct_name),
     sprintf("  void *field_ptr = &p->%s;", field_name),
     sprintf(
       "  return RC_make_borrowed_view(field_ptr, Rf_install(\"rtinycc_borrowed\"), ext);"
@@ -905,8 +920,7 @@ generate_field_addr <- function(struct_name, field_name) {
 generate_struct_raw_access <- function(struct_name) {
   c(
     sprintf("SEXP R_wrap_struct_%s_get_raw(SEXP ext, SEXP len) {", struct_name),
-    sprintf("  struct %s *p = R_ExternalPtrAddr(ext);", struct_name),
-    sprintf("  if (!p) Rf_error(\"Null pointer\");"),
+    composite_pointer_line("struct", struct_name),
     "  int n = asInteger(len);",
     "  SEXP raw = PROTECT(allocVector(RAWSXP, n));",
     sprintf(
@@ -919,14 +933,15 @@ generate_struct_raw_access <- function(struct_name) {
     "}",
     "",
     sprintf("SEXP R_wrap_struct_%s_set_raw(SEXP ext, SEXP raw) {", struct_name),
-    sprintf("  struct %s *p = R_ExternalPtrAddr(ext);", struct_name),
-    sprintf("  if (!p) Rf_error(\"Null pointer\");"),
-    "  int n = LENGTH(raw);",
+    composite_pointer_line("struct", struct_name),
+    "  if (TYPEOF(raw) != RAWSXP) Rf_error(\"expected raw vector\");",
+    "  R_xlen_t n = XLENGTH(raw);",
     sprintf(
-      "  memcpy(p, RAW(raw), (n < sizeof(struct %s)) ? n : sizeof(struct %s));",
+      "  R_xlen_t n_copy = (n < (R_xlen_t)sizeof(struct %s)) ? n : (R_xlen_t)sizeof(struct %s);",
       struct_name,
       struct_name
     ),
+    "  if (n_copy > 0 && RAW_GET_REGION(raw, 0, n_copy, (Rbyte*)p) != n_copy) Rf_error(\"failed to read raw vector\");",
     "  return R_NilValue;",
     "}",
     ""
@@ -996,7 +1011,8 @@ generate_union_new <- function(union_name) {
   c(
     sprintf("SEXP R_wrap_union_%s_new(void) {", union_name),
     sprintf(
-      "  union %s *p = calloc(1, sizeof(union %s));",
+      "  union %s *p = (union %s *)RC_host_calloc_c(1, sizeof(union %s));",
+      union_name,
       union_name,
       union_name
     ),
@@ -1013,10 +1029,11 @@ generate_union_new <- function(union_name) {
 generate_union_free <- function(union_name) {
   c(
     sprintf("SEXP R_wrap_union_%s_free(SEXP ext) {", union_name),
-    "  if (R_ExternalPtrProtected(ext) != R_NilValue) {",
-    "    Rf_error(\"Cannot free borrowed view; free the owning object instead\");",
-    "  }",
-    "  RC_free_finalizer(ext);",
+    sprintf(
+      "  (void)RC_check_composite_ptr(ext, Rf_install(\"union_%s\"), 1);",
+      union_name
+    ),
+    "  RC_owned_native_finalizer(ext);",
     "  return R_NilValue;",
     "}",
     ""
@@ -1031,8 +1048,7 @@ generate_union_getter <- function(union_name, mem_name, mem_spec) {
     # Nested struct in union
     return(c(
       sprintf("SEXP R_wrap_union_%s_get_%s(SEXP ext) {", union_name, mem_name),
-      sprintf("  union %s *p = R_ExternalPtrAddr(ext);", union_name),
-      sprintf("  if (!p) Rf_error(\"Null pointer\");"),
+      composite_pointer_line("union", union_name),
       sprintf(
         "  return RC_make_borrowed_view(&p->%s, Rf_install(\"struct_%s\"), ext);",
         mem_name,
@@ -1048,8 +1064,7 @@ generate_union_getter <- function(union_name, mem_name, mem_spec) {
 
   c(
     sprintf("SEXP R_wrap_union_%s_get_%s(SEXP ext) {", union_name, mem_name),
-    sprintf("  union %s *p = R_ExternalPtrAddr(ext);", union_name),
-    sprintf("  if (!p) Rf_error(\"Null pointer\");"),
+    composite_pointer_line("union", union_name),
     paste("  ", return_code, collapse = "\n"),
     "}",
     ""
@@ -1183,8 +1198,7 @@ generate_union_setter <- function(union_name, mem_name, mem_spec) {
       union_name,
       mem_name
     ),
-    sprintf("  union %s *p = R_ExternalPtrAddr(ext);", union_name),
-    sprintf("  if (!p) Rf_error(\"Null pointer\");"),
+    composite_pointer_line("union", union_name),
     paste("  ", setter_code, collapse = "\n"),
     "  return ext;",
     "}",
@@ -1270,16 +1284,22 @@ generate_global_helpers <- function(globals) {
     if (ffi_type == "void") {
       stop("Global type cannot be void", call. = FALSE)
     }
+    if (ffi_type == "cstring") {
+      stop(
+        "Global type cannot be cstring; use ptr with explicitly owned storage",
+        call. = FALSE
+      )
+    }
 
     c_type <- type_info$c_type
     get_ret <- generate_c_return(global_name, ffi_type)
-    get_ret_lines <- paste0("  ", strsplit(get_ret, "\n")[[1]])
+    get_ret_lines <- paste("  ", strsplit(get_ret, "\n")[[1]], sep = "")
 
     set_arg <- "value_"
     set_input <- generate_c_input("value", set_arg, ffi_type)
     set_input_lines <- strsplit(set_input, "\n")[[1]]
     set_ret <- generate_c_return(global_name, ffi_type)
-    set_ret_lines <- paste0("  ", strsplit(set_ret, "\n")[[1]])
+    set_ret_lines <- paste("  ", strsplit(set_ret, "\n")[[1]], sep = "")
 
     helpers <- c(
       helpers,
@@ -1344,11 +1364,14 @@ generate_ffi_code <- function(
     parts,
     "#include <R.h>",
     "#include <Rinternals.h>",
+    "#include <stddef.h>",
     "#ifndef STRING_PTR_RO",
     "#define STRING_PTR_RO STRING_PTR",
     "#endif",
     "void RC_free_finalizer(SEXP ext);",
     "void RC_owned_native_finalizer(SEXP ext);",
+    "void *RC_check_composite_ptr(SEXP ext, SEXP expected_tag, int require_owned);",
+    "void *RC_host_calloc_c(size_t n, size_t size);",
     "SEXP RC_make_borrowed_view(void *ptr, SEXP tag, SEXP owner);",
     "SEXP RC_make_unowned_ptr(void *ptr, SEXP tag);",
     "SEXP RC_make_owned_ptr(void *ptr, SEXP tag);",
@@ -1360,7 +1383,6 @@ generate_ffi_code <- function(
     parts,
     "#include <stdint.h>",
     "#include <stdbool.h>",
-    "#include <stddef.h>",
     "#include <limits.h>",
     "#include <math.h>",
     "#include <string.h>",
@@ -1373,9 +1395,12 @@ generate_ffi_code <- function(
       parts,
       "",
       "/* Callback trampoline support */",
-      "typedef struct { int id; int refs; int origin_id; } callback_token_t;",
+      paste(
+        "typedef struct { int id; int refs; int origin_id;",
+        "unsigned int generation; } callback_token_t;"
+      ),
       if (cb_tramps$needs_sync) {
-        "SEXP RC_invoke_callback_id(int, SEXP);"
+        "SEXP RC_invoke_callback_id(int, unsigned int, SEXP);"
       } else {
         NULL
       },
@@ -1394,7 +1419,11 @@ generate_ffi_code <- function(
           "  union { int i; double d; void* p; char* s; } v;",
           "} cb_arg_t;",
           "",
-          "int RC_callback_async_schedule_c(int id, int n_args, const cb_arg_t *args);",
+          paste(
+            "int RC_callback_async_schedule_c(int id, unsigned int generation,",
+            "int n_args, const cb_arg_t *args);"
+          ),
+          "void RC_callback_async_note_failure_c(int code);",
           "/* Drain pending async callbacks from main-thread C code */",
           "void RC_callback_async_drain_c(void);",
           "/* Run func(arg) on a new thread, drain callbacks on the main thread */",
@@ -1419,7 +1448,10 @@ generate_ffi_code <- function(
           "  union { int i; double d; void* p; } v;",
           "} cb_result_t;",
           "",
-          "int RC_callback_async_schedule_sync_c(int id, int n_args, const cb_arg_t *args, cb_result_t *result);",
+          paste(
+            "int RC_callback_async_schedule_sync_c(int id, unsigned int generation,",
+            "int n_args, const cb_arg_t *args, cb_result_t *result);"
+          ),
           "/* Drain loop: services callbacks via select()/MsgWait until *done_flag != 0. */",
           "void RC_callback_async_drain_loop_c(volatile int *done_flag);"
         )
@@ -1521,7 +1553,7 @@ generate_callback_trampolines <- function(symbols) {
             call. = FALSE
           )
         }
-        wrapper_name <- paste0("R_wrap_", sym_name)
+        wrapper_name <- str_interp("R_wrap_{sym_name}")
         tramp_name <- callback_trampoline_name(wrapper_name, i)
         if (is_callback_async_type(ffi_type)) {
           needs_async <- TRUE

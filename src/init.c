@@ -22,8 +22,10 @@ SEXP RC_libtcc_compile_string(SEXP ext, SEXP code);
 SEXP RC_libtcc_add_symbol(SEXP ext, SEXP name, SEXP addr);
 SEXP RC_libtcc_add_host_symbols(SEXP ext);
 SEXP RC_libtcc_relocate(SEXP ext);
-SEXP RC_libtcc_call_symbol(SEXP ext, SEXP name, SEXP ret_type);
+SEXP RC_libtcc_output_file(SEXP ext, SEXP filename);
+SEXP RC_libtcc_call_symbol(SEXP ext, SEXP name, SEXP ret_type, SEXP args, SEXP naok_);
 SEXP RC_libtcc_get_symbol(SEXP ext, SEXP name);
+SEXP RC_libtcc_list_symbols(SEXP ext);
 
 SEXP RC_libtcc_ptr_valid(SEXP ptr);
 SEXP RC_get_external_ptr_addr(SEXP ext);
@@ -77,8 +79,13 @@ SEXP RC_cleanup_callbacks(void);
 SEXP RC_callback_async_init(void);
 SEXP RC_callback_async_schedule(SEXP callback_ext, SEXP args);
 SEXP RC_callback_async_drain(void);
-int RC_callback_async_schedule_c(int id, int n_args, const cb_arg_t *args);
-int RC_callback_async_schedule_sync_c(int id, int n_args, const cb_arg_t *args, cb_result_t *result);
+SEXP RC_callback_async_failure_status(void);
+SEXP RC_callback_async_failure_reset(void);
+int RC_callback_async_schedule_c(int id, unsigned int generation,
+                                 int n_args, const cb_arg_t *args);
+int RC_callback_async_schedule_sync_c(int id, unsigned int generation,
+                                      int n_args, const cb_arg_t *args,
+                                      cb_result_t *result);
 
 
 // .Call entries
@@ -94,8 +101,10 @@ static const R_CallMethodDef CallEntries[] = {
     {"RC_libtcc_add_symbol",  (DL_FUNC) &RC_libtcc_add_symbol,  3},
     {"RC_libtcc_add_host_symbols", (DL_FUNC) &RC_libtcc_add_host_symbols, 1},
     {"RC_libtcc_relocate",    (DL_FUNC) &RC_libtcc_relocate,    1},
-    {"RC_libtcc_call_symbol", (DL_FUNC) &RC_libtcc_call_symbol, 3},
+    {"RC_libtcc_output_file", (DL_FUNC) &RC_libtcc_output_file, 2},
+    {"RC_libtcc_call_symbol", (DL_FUNC) &RC_libtcc_call_symbol, 5},
     {"RC_libtcc_get_symbol",  (DL_FUNC) &RC_libtcc_get_symbol,  2},
+    {"RC_libtcc_list_symbols", (DL_FUNC) &RC_libtcc_list_symbols, 1},
     
     {"RC_libtcc_ptr_valid",   (DL_FUNC) &RC_libtcc_ptr_valid,   1},
     {"RC_get_external_ptr_addr", (DL_FUNC) &RC_get_external_ptr_addr, 1},
@@ -149,6 +158,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"RC_callback_async_init", (DL_FUNC) &RC_callback_async_init, 0},
     {"RC_callback_async_schedule", (DL_FUNC) &RC_callback_async_schedule, 2},
     {"RC_callback_async_drain", (DL_FUNC) &RC_callback_async_drain, 0},
+    {"RC_callback_async_failure_status", (DL_FUNC) &RC_callback_async_failure_status, 0},
+    {"RC_callback_async_failure_reset", (DL_FUNC) &RC_callback_async_failure_reset, 0},
     
     {NULL, NULL, 0}
 };

@@ -70,14 +70,16 @@ tcc_path <- function() {
 
 #' TinyCC include search paths
 #'
-#' Returns the include directories used by the bundled TinyCC (top-level include and lib/tcc/include).
+#' Returns the include directories used by the bundled TinyCC, including the
+#' package headers under `include/rtinycc`.
 #' @return A character vector of include directories.
 #' @export
 tcc_include_paths <- function() {
   prefix <- tcc_prefix()
   paths <- c(
     file.path(prefix, "include"),
-    file.path(prefix, "lib", "tcc", "include")
+    file.path(prefix, "lib", "tcc", "include"),
+    system.file("include", package = "Rtinycc")
   )
   if (.Platform$OS.type == "windows") {
     paths <- c(paths, file.path(prefix, "include", "winapi"))
@@ -174,7 +176,10 @@ check_cli_exists <- function() {
 
 #' Create a libtcc state
 #'
-#' Initialize a libtcc compilation state, optionally pointing at the bundled include/lib paths.
+#' Initialize a libtcc compilation state, optionally pointing at the bundled
+#' include/lib paths. Memory states are finalized with [tcc_relocate()]; other
+#' output modes are written with `tcc_output_file()`. Finalization is
+#' single-shot, after which compilation options and source cannot be changed.
 #' @param output Output type: one of "memory", "obj", "dll", "exe", "preprocess".
 #' @param include_path Path(s) to headers; defaults to the bundled include dirs.
 #' @param lib_path Path(s) to libraries; defaults to the bundled lib dirs (lib and lib/tcc).
@@ -281,11 +286,38 @@ tcc_compile_string <- function(state, code) {
 }
 
 #' Relocate compiled code
+#'
+#' Relocation is valid only for a state created with `output = "memory"` and
+#' can be performed only once. Callable symbols are unavailable until relocation
+#' succeeds. Use `tcc_output_file()` for object, shared-library, executable, or
+#' preprocessor output.
+#'
 #' @param state A `tcc_state`.
 #' @return Integer status code (0 = success).
 #' @export
 tcc_relocate <- function(state) {
   .Call(RC_libtcc_relocate, state)
+}
+
+#' Write a non-memory TinyCC output file
+#'
+#' Finalize a state created with `output = "obj"`, `"dll"`, `"exe"`, or
+#' `"preprocess"` and write the resulting artifact. A state can be finalized
+#' only once. Memory states must instead use [tcc_relocate()].
+#'
+#' @param state A non-memory `tcc_state`.
+#' @param path Destination file path.
+#' @return Integer status code (0 = success).
+#' @export
+tcc_output_file <- function(state, path) {
+  if (!is.character(path) || length(path) != 1L || is.na(path) || !nzchar(path)) {
+    stop("path must be a non-empty character scalar", call. = FALSE)
+  }
+  .Call(
+    RC_libtcc_output_file,
+    state,
+    normalizePath(path, winslash = "/", mustWork = FALSE)
+  )
 }
 
 #' Add a symbol to a libtcc state
@@ -299,24 +331,117 @@ tcc_add_symbol <- function(state, name, addr) {
 }
 
 #' Get a symbol pointer from a libtcc state
+#'
+#' The memory state must first be successfully finalized with [tcc_relocate()].
+#'
 #' @param state A `tcc_state`.
 #' @param name Symbol name to look up.
-#' @return External pointer of class `tcc_symbol`.
+#' @return External pointer of class `tcc_symbol`. The pointer retains `state`
+#'   so its relocated code remains alive for as long as the symbol is reachable.
 #' @export
 tcc_get_symbol <- function(state, name) {
   .Call(RC_libtcc_get_symbol, state, name)
 }
 
-
-#' Call a zero-argument symbol with a specified return type
+#' List symbols known to a libtcc state
+#'
+#' Return the global symbols currently reported by libtcc for a state. This is
+#' a best-effort symbol-table inspection helper for compiled/linked TCC states,
+#' not a portable exhaustive symbol enumerator, not a DLL export scanner, and
+#' not a C signature discovery API. Platform backends may omit symbols that are
+#' still resolvable with [tcc_get_symbol()]. For meaningful runtime addresses,
+#' call it after [tcc_relocate()].
+#'
 #' @param state A `tcc_state`.
-#' @param name Symbol name to call.
-#' @param return One of "int", "double", "void".
-#' @return The return value cast to the requested type (NULL for void).
+#' @return A data frame with columns `name` and `address`, where `address` is a
+#'   hexadecimal character string.
 #' @export
-tcc_call_symbol <- function(state, name, return = c("int", "double", "void")) {
-  return <- match.arg(return)
-  .Call(RC_libtcc_call_symbol, state, name, return)
+tcc_list_symbols <- function(state) {
+  .Call(RC_libtcc_list_symbols, state)
+}
+
+
+#' Call a symbol from a TinyCC state
+#'
+#' The memory state must first be successfully finalized with [tcc_relocate()].
+#'
+#' With no additional arguments, `tcc_call_symbol()` preserves its historical
+#' quick-test behavior: call a zero-argument symbol and box an `int`, `double`,
+#' or `void` return value.
+#'
+#' With additional arguments, it uses an R `.C()`-style calling convention: the
+#' target C function must be `void`, each atomic or character R argument is
+#' copied to guarded mutable call storage and passed by pointer, and the result
+#' is a list of the modified argument values. Supported argument mappings follow
+#' R's `.C()` interface: raw as `unsigned char *`, integer/logical as `int *`,
+#' numeric as `double *` or `float *` when `attr(x, "Csingle")` is true,
+#' complex as `Rcomplex *`, character as `char **`, lists as read-only `SEXP *`,
+#' and functions/environments/other R objects as read-only `SEXP`. Up to 65
+#' arguments are supported. Guard bytes around copied buffers are checked after
+#' the call to catch simple native underwrites and overwrites; character code may
+#' edit string contents in place but must not replace `char *` elements in the
+#' `char **` array.
+#'
+#' Non-atomic R objects are borrowed for the duration of the call only. C code
+#' must not mutate them through this interface, and must call `R_PreserveObject()`
+#' if it deliberately stores a `SEXP` beyond the call. This is a low-level
+#' convenience interface; for typed scalar returns, explicit zero-copy arrays,
+#' ownership metadata, and clearer signatures, prefer [tcc_ffi()].
+#'
+#' @param .state A `tcc_state`. Named `state =` is also accepted for
+#'   compatibility with earlier releases.
+#' @param .NAME Symbol name to call. Named `name =` is also accepted for
+#'   compatibility with earlier releases.
+#' @param ... Optional arguments for `.C()`-style pointer calls.
+#' @param return One of `"int"`, `"double"`, or `"void"`. If `...` is present,
+#'   the only supported value is `"void"`; when omitted with `...`, it defaults
+#'   to `"void"`.
+#' @param NAOK If `FALSE`, integer/logical `NA` and non-finite numeric/complex
+#'   values are rejected before the call, matching `.C()`'s default safety
+#'   check. If `TRUE`, those values are passed through.
+#' @return For zero-argument scalar calls, the boxed return value (`NULL` for
+#'   `void`). For `.C()`-style calls, a list mirroring `...` with any C-side
+#'   modifications copied back.
+#' @export
+tcc_call_symbol <- function(.state, .NAME, ..., return = c("int", "double", "void"), NAOK = FALSE) {
+  args <- list(...)
+
+  if (missing(.state)) {
+    if (!is.null(args$state)) {
+      .state <- args$state
+      args$state <- NULL
+    } else {
+      stop("argument '.state' is missing", call. = FALSE)
+    }
+  }
+  if (missing(.NAME)) {
+    if (!is.null(args$name)) {
+      .NAME <- args$name
+      args$name <- NULL
+    } else {
+      stop("argument '.NAME' is missing", call. = FALSE)
+    }
+  }
+
+  if (missing(return) && length(args) == 1L && is.character(args[[1L]]) &&
+      length(args[[1L]]) == 1L && args[[1L]] %in% c("int", "double", "void") &&
+      is.null(names(args))) {
+    return <- args[[1L]]
+    args <- list()
+  } else if (missing(return) && length(args) > 0L) {
+    return <- "void"
+  } else {
+    return <- match.arg(return)
+  }
+
+  if (length(args) > 0L && !identical(return, "void")) {
+    stop("tcc_call_symbol() with arguments uses .C-style void functions", call. = FALSE)
+  }
+  if (!isTRUE(NAOK) && !identical(NAOK, FALSE)) {
+    stop("NAOK must be TRUE or FALSE", call. = FALSE)
+  }
+
+  .Call(RC_libtcc_call_symbol, .state, .NAME, return, args, isTRUE(NAOK))
 }
 
 #' Check if a tcc_symbol external pointer is valid
