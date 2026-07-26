@@ -400,14 +400,14 @@ helpers for that pattern.</p>
 <span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a>target <span class="ot">&lt;-</span> <span class="fu">tcc_malloc</span>(<span class="dv">4</span>)</span>
 <span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a></span>
 <span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a><span class="fu">tcc_ptr_set</span>(ptr_ref, target)</span>
-<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a><span class="co">#&gt; &lt;pointer: 0x5750a2f63d60&gt;</span></span>
+<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a><span class="co">#&gt; &lt;pointer: 0x57d6b13c2380&gt;</span></span>
 <span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a><span class="fu">tcc_ptr_addr</span>(<span class="fu">tcc_data_ptr</span>(ptr_ref))</span>
-<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a><span class="co">#&gt; [1] &quot;96003831070048&quot;</span></span>
+<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a><span class="co">#&gt; [1] &quot;96579597829728&quot;</span></span>
 <span id="cb5-9"><a href="#cb5-9" tabindex="-1"></a><span class="fu">tcc_ptr_addr</span>(target)</span>
-<span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a><span class="co">#&gt; [1] &quot;96003831070048&quot;</span></span>
+<span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a><span class="co">#&gt; [1] &quot;96579597829728&quot;</span></span>
 <span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a></span>
 <span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a><span class="fu">tcc_ptr_set</span>(ptr_ref, <span class="fu">tcc_null_ptr</span>())</span>
-<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a><span class="co">#&gt; &lt;pointer: 0x5750a2f63d60&gt;</span></span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a><span class="co">#&gt; &lt;pointer: 0x57d6b13c2380&gt;</span></span>
 <span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a><span class="fu">tcc_ptr_is_null</span>(<span class="fu">tcc_data_ptr</span>(ptr_ref))</span>
 <span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span>
 <span id="cb5-16"><a href="#cb5-16" tabindex="-1"></a></span>

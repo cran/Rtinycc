@@ -1,3 +1,18 @@
+# Rtinycc 0.1.15
+
+- Update the bundled TinyCC fork for Linux arm64 builds. Its arm64 CI now rejects mixed C90 declarations, preventing the compiler warning reported by R-devel checks.
+
+# Rtinycc 0.1.14
+
+- Give the bundled TinyCC command-line executable a relocatable loader path (`$ORIGIN/../lib` on ELF systems and `@loader_path/../lib` on macOS), so `tcc_path()` works directly after installation without loader environment variables.
+- Check the bundled CLI with loader environment variables removed during package configuration and installed-package tests.
+
+# Rtinycc 0.1.13
+
+- Fix the vendored TinyCC build on Linux arm64 by keeping TLS relocation declarations C90-compatible.
+- Fix the webR/R-universe wasm package build so the Emscripten-hosted TinyCC build does not try to execute its wasm `tcc` side module while constructing `libtcc1.a`.
+- Document a persistent remote CUDA workflow in which a mirai daemon loads Rtinycc, retains the compiled host adapter between requests, executes NVRTC-generated PTX, and returns structured R results.
+
 # Rtinycc 0.1.12
 
 - Prevent high-level FFI compilation modes that cannot produce safe callable bindings; `tcc_compile()` now fails clearly unless output is in-memory.

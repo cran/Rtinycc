@@ -701,8 +701,8 @@ below are skipped.</p>
 <span id="cb12-9"><a href="#cb12-9" tabindex="-1"></a>compile_times<span class="sc">$</span>milliseconds <span class="ot">&lt;-</span> <span class="fu">round</span>(compile_times<span class="sc">$</span>seconds <span class="sc">*</span> <span class="dv">1000</span>, <span class="dv">1</span>)</span>
 <span id="cb12-10"><a href="#cb12-10" tabindex="-1"></a>compile_times</span>
 <span id="cb12-11"><a href="#cb12-11" tabindex="-1"></a><span class="co">#&gt;   implementation seconds milliseconds</span></span>
-<span id="cb12-12"><a href="#cb12-12" tabindex="-1"></a><span class="co">#&gt; 1        Rtinycc   0.013           13</span></span>
-<span id="cb12-13"><a href="#cb12-13" tabindex="-1"></a><span class="co">#&gt; 2         callme   0.299          299</span></span></code></pre></div>
+<span id="cb12-12"><a href="#cb12-12" tabindex="-1"></a><span class="co">#&gt; 1        Rtinycc   0.014           14</span></span>
+<span id="cb12-13"><a href="#cb12-13" tabindex="-1"></a><span class="co">#&gt; 2         callme   0.279          279</span></span></code></pre></div>
 <p>The expected pattern is:</p>
 <ul>
 <li><code>Rtinycc</code> wins clearly on tiny compile latency because it
@@ -847,8 +847,8 @@ point.</p>
 <span id="cb15-15"><a href="#cb15-15" tabindex="-1"></a><span class="co">#&gt; # A tibble: 2 × 6</span></span>
 <span id="cb15-16"><a href="#cb15-16" tabindex="-1"></a><span class="co">#&gt;   expression      min   median `itr/sec` mem_alloc `gc/sec`</span></span>
 <span id="cb15-17"><a href="#cb15-17" tabindex="-1"></a><span class="co">#&gt;   &lt;bch:expr&gt; &lt;bch:tm&gt; &lt;bch:tm&gt;     &lt;dbl&gt; &lt;bch:byt&gt;    &lt;dbl&gt;</span></span>
-<span id="cb15-18"><a href="#cb15-18" tabindex="-1"></a><span class="co">#&gt; 1 Rtinycc       622µs    761µs     1322.      13KB        0</span></span>
-<span id="cb15-19"><a href="#cb15-19" tabindex="-1"></a><span class="co">#&gt; 2 callme        243µs    250µs     3930.        0B        0</span></span></code></pre></div>
+<span id="cb15-18"><a href="#cb15-18" tabindex="-1"></a><span class="co">#&gt; 1 Rtinycc       659µs    717µs     1379.      13KB        0</span></span>
+<span id="cb15-19"><a href="#cb15-19" tabindex="-1"></a><span class="co">#&gt; 2 callme        259µs    279µs     3486.        0B        0</span></span></code></pre></div>
 <p>Interpretation:</p>
 <ul>
 <li>the <code>callme</code> path is close to the cost of a conventional
@@ -884,8 +884,8 @@ result.</p>
 <span id="cb16-13"><a href="#cb16-13" tabindex="-1"></a><span class="co">#&gt; # A tibble: 2 × 6</span></span>
 <span id="cb16-14"><a href="#cb16-14" tabindex="-1"></a><span class="co">#&gt;   expression      min   median `itr/sec` mem_alloc `gc/sec`</span></span>
 <span id="cb16-15"><a href="#cb16-15" tabindex="-1"></a><span class="co">#&gt;   &lt;bch:expr&gt; &lt;bch:tm&gt; &lt;bch:tm&gt;     &lt;dbl&gt; &lt;bch:byt&gt;    &lt;dbl&gt;</span></span>
-<span id="cb16-16"><a href="#cb16-16" tabindex="-1"></a><span class="co">#&gt; 1 Rtinycc      1.63ms   2.44ms      394.    3.15MB     19.7</span></span>
-<span id="cb16-17"><a href="#cb16-17" tabindex="-1"></a><span class="co">#&gt; 2 callme       1.32ms   1.42ms      577.    3.13MB     28.8</span></span></code></pre></div>
+<span id="cb16-16"><a href="#cb16-16" tabindex="-1"></a><span class="co">#&gt; 1 Rtinycc      1.68ms   2.67ms      374.    3.15MB     18.7</span></span>
+<span id="cb16-17"><a href="#cb16-17" tabindex="-1"></a><span class="co">#&gt; 2 callme       1.36ms   1.46ms      576.    3.13MB     28.8</span></span></code></pre></div>
 <p>Interpretation:</p>
 <ul>
 <li>both sides now write into ordinary R numeric storage</li>
@@ -930,14 +930,14 @@ into a fresh R vector</li>
 <span id="cb17-24"><a href="#cb17-24" tabindex="-1"></a><span class="co">#&gt; # A tibble: 2 × 6</span></span>
 <span id="cb17-25"><a href="#cb17-25" tabindex="-1"></a><span class="co">#&gt;   expression      min   median `itr/sec` mem_alloc `gc/sec`</span></span>
 <span id="cb17-26"><a href="#cb17-26" tabindex="-1"></a><span class="co">#&gt;   &lt;bch:expr&gt; &lt;bch:tm&gt; &lt;bch:tm&gt;     &lt;dbl&gt; &lt;bch:byt&gt;    &lt;dbl&gt;</span></span>
-<span id="cb17-27"><a href="#cb17-27" tabindex="-1"></a><span class="co">#&gt; 1 Rtinycc       908µs   1.07ms      857.    15.4KB     42.8</span></span>
-<span id="cb17-28"><a href="#cb17-28" tabindex="-1"></a><span class="co">#&gt; 2 callme        467µs 501.02µs     1900.        0B      0</span></span>
+<span id="cb17-27"><a href="#cb17-27" tabindex="-1"></a><span class="co">#&gt; 1 Rtinycc       884µs   1.03ms      835.    15.4KB     41.7</span></span>
+<span id="cb17-28"><a href="#cb17-28" tabindex="-1"></a><span class="co">#&gt; 2 callme        475µs 532.11µs     1701.        0B      0</span></span>
 <span id="cb17-29"><a href="#cb17-29" tabindex="-1"></a>rand_results<span class="sc">$</span>rand_bench_n4096</span>
 <span id="cb17-30"><a href="#cb17-30" tabindex="-1"></a><span class="co">#&gt; # A tibble: 2 × 6</span></span>
 <span id="cb17-31"><a href="#cb17-31" tabindex="-1"></a><span class="co">#&gt;   expression      min   median `itr/sec` mem_alloc `gc/sec`</span></span>
 <span id="cb17-32"><a href="#cb17-32" tabindex="-1"></a><span class="co">#&gt;   &lt;bch:expr&gt; &lt;bch:tm&gt; &lt;bch:tm&gt;     &lt;dbl&gt; &lt;bch:byt&gt;    &lt;dbl&gt;</span></span>
-<span id="cb17-33"><a href="#cb17-33" tabindex="-1"></a><span class="co">#&gt; 1 Rtinycc      1.89ms   2.82ms      329.    3.13MB     16.4</span></span>
-<span id="cb17-34"><a href="#cb17-34" tabindex="-1"></a><span class="co">#&gt; 2 callme       1.18ms   1.94ms      480.    3.13MB     24.0</span></span></code></pre></div>
+<span id="cb17-33"><a href="#cb17-33" tabindex="-1"></a><span class="co">#&gt; 1 Rtinycc      1.71ms   2.62ms      341.    3.13MB     17.1</span></span>
+<span id="cb17-34"><a href="#cb17-34" tabindex="-1"></a><span class="co">#&gt; 2 callme       1.34ms   2.05ms      422.    3.13MB     21.1</span></span></code></pre></div>
 <p>The usual pattern is:</p>
 <ul>
 <li>for <code>fill_rand()</code>, the comparison is much closer to
